@@ -1,7 +1,7 @@
 {
   "name": "pulso-desktop",
   "productName": "Pulso",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Aplicativo Pulso para chamadas, câmera, microfone e compartilhamento de tela.",
   "private": true,
   "main": "src/main.cjs",

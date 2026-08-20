@@ -34,7 +34,7 @@ npm run desktop:smoke
 npm run desktop:make
 ```
 
-O instalador é gerado em `release/Pulso-Desktop-Setup-0.1.0.exe`. Ele ainda não possui assinatura de código, então versões de teste podem exibir um aviso do Windows SmartScreen.
+O instalador é gerado em `release/Pulso-Desktop-Setup-0.2.0.exe`. Ele ainda não possui assinatura de código, então versões de teste podem exibir um aviso do Windows SmartScreen.
 
 O aplicativo melhora o controle da captura e a estabilidade no Windows, mas 60 fps continua sendo um alvo: CPU, upload, quantidade de espectadores e o caminho de rede definem a taxa efetiva. O banner da transmissão mostra o FPS realmente codificado e o bitrate total. Se surgir `Compatível · 12 fps`, a conexão direta falhou e o ganho estrutural necessário é TURN/SFU, não um computador mais rápido.
 

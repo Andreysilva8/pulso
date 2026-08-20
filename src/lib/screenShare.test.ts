@@ -181,7 +181,7 @@ describe('screen-share quality profile', () => {
     expect(removeTrack).toHaveBeenCalledWith(audioTrack)
   })
 
-  it('keeps isolated window audio available to the call', async () => {
+  it('keeps isolated browser window audio available to the call', async () => {
     const audioTrack = {
       readyState: 'live',
       stop: vi.fn(),
@@ -195,7 +195,7 @@ describe('screen-share quality profile', () => {
       removeTrack: vi.fn(),
     } as unknown as MediaStream
 
-    await expect(prepareSafeScreenAudio(stream)).resolves.toMatchObject({
+    await expect(prepareSafeScreenAudio(stream, 'Mozilla/5.0 Chrome/141.0')).resolves.toMatchObject({
       track: audioTrack,
       blockedSystemAudio: false,
       systemWide: false,
@@ -204,6 +204,31 @@ describe('screen-share quality profile', () => {
     expect(audioTrack.applyConstraints).not.toHaveBeenCalled()
     expect(audioTrack.stop).not.toHaveBeenCalled()
     expect(audioTrack.contentHint).toBe('music')
+  })
+
+  it('blocks unfiltered Electron loopback audio even when a window was selected', async () => {
+    const audioTrack = {
+      readyState: 'live',
+      stop: vi.fn(),
+      contentHint: '',
+      getSettings: () => ({ restrictOwnAudio: false }),
+      applyConstraints: vi.fn().mockRejectedValue(new DOMException('unsupported', 'OverconstrainedError')),
+    } as unknown as MediaStreamTrack
+    const removeTrack = vi.fn()
+    const stream = {
+      getVideoTracks: () => [{ getSettings: () => ({ displaySurface: 'window' }) }],
+      getAudioTracks: () => [audioTrack],
+      removeTrack,
+    } as unknown as MediaStream
+
+    await expect(prepareSafeScreenAudio(stream, 'Pulso Electron/43.4.1')).resolves.toMatchObject({
+      track: null,
+      blockedSystemAudio: true,
+      systemWide: true,
+      displaySurface: 'window',
+    })
+    expect(audioTrack.stop).toHaveBeenCalledOnce()
+    expect(removeTrack).toHaveBeenCalledWith(audioTrack)
   })
 
   it('uses a balanced sender for the stable default profile', async () => {

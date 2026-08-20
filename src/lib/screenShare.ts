@@ -181,11 +181,17 @@ type ExtendedAudioSettings = MediaTrackSettings & {
   restrictOwnAudio?: boolean
 }
 
-export async function prepareSafeScreenAudio(stream: MediaStream): Promise<ScreenAudioSafety> {
+export async function prepareSafeScreenAudio(
+  stream: MediaStream,
+  userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+): Promise<ScreenAudioSafety> {
   const screenTrack = stream.getVideoTracks()[0]
   const displaySurface = screenTrack?.getSettings().displaySurface
   let audioTrack = stream.getAudioTracks().find((track) => track.readyState === 'live') || null
-  const systemWide = displaySurface === 'monitor' && Boolean(audioTrack)
+  // Electron's Windows loopback source captures the whole system even when the
+  // user selected a single window. Treat every desktop-app audio track as
+  // system-wide so the Pulso output can never be retransmitted recursively.
+  const systemWide = Boolean(audioTrack) && (displaySurface === 'monitor' || isPulsoDesktop(userAgent))
   let ownAudioRestricted = Boolean(
     audioTrack && (audioTrack.getSettings() as ExtendedAudioSettings).restrictOwnAudio,
   )

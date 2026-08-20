@@ -11,6 +11,7 @@ const {
 } = require('electron')
 const {
   PULSO_APP_URL,
+  canCheckPermission,
   canGrantPermission,
   isPulsoUrl,
   isTrustedDisplayRequest,
@@ -26,7 +27,8 @@ let mainWindow = null
 let activePicker = null
 const OFFLINE_URL = pathToFileURL(path.join(__dirname, 'offline.html')).toString()
 const grantedMediaTypes = new Set()
-let mediaPermissionPrompt = null
+let mediaPermissionQueue = Promise.resolve(false)
+let lastPulsoUrl = PULSO_APP_URL
 
 function requestedMediaTypes(details) {
   const mediaTypes = Array.isArray(details?.mediaTypes) ? details.mediaTypes : []
@@ -82,7 +84,10 @@ function finishPicker(result) {
 }
 
 function isAllowedMainNavigation(rawUrl) {
-  return rawUrl === OFFLINE_URL || isPulsoUrl(rawUrl)
+  const offlinePage = rawUrl === OFFLINE_URL
+    || rawUrl.startsWith(`${OFFLINE_URL}?`)
+    || rawUrl.startsWith(`${OFFLINE_URL}#`)
+  return offlinePage || isPulsoUrl(rawUrl)
 }
 
 function openSourcePicker(sources, audioRequested) {
@@ -138,7 +143,10 @@ function openSourcePicker(sources, audioRequested) {
       activePicker = null
       resolve(null)
     })
-    void pickerWindow.loadFile(path.join(__dirname, 'picker.html'))
+    void pickerWindow.loadFile(path.join(__dirname, 'picker.html')).catch((error) => {
+      console.error('Falha ao carregar o seletor de compartilhamento.', error)
+      if (activePicker?.window === pickerWindow) finishPicker(null)
+    })
   })
 }
 
@@ -159,16 +167,11 @@ ipcMain.on('pulso-picker:cancel', (event) => {
 function configurePermissions() {
   const pulsoSession = session.defaultSession
 
-  pulsoSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
-    const requestingUrl = details?.requestingUrl || requestingOrigin
-    if (permission === 'media') {
-      return Boolean(
-        details?.isMainFrame
-          && isPulsoUrl(requestingUrl)
-          && (details.mediaType === 'audio' || details.mediaType === 'video'),
-      )
-    }
-    return canGrantPermission(permission, requestingUrl)
+  pulsoSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false
+    if (webContents && webContents !== mainWindow.webContents) return false
+    const requestingUrl = details?.requestingUrl || details?.securityOrigin || requestingOrigin
+    return canCheckPermission(permission, requestingUrl, details, grantedMediaTypes)
   })
 
   pulsoSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
@@ -191,18 +194,20 @@ function configurePermissions() {
       return
     }
 
-    const prompt = mediaPermissionPrompt || confirmMediaPermission(mediaTypes)
-    mediaPermissionPrompt = prompt
-    void prompt
+    const permissionRequest = mediaPermissionQueue
+      .catch(() => false)
+      .then(() => confirmMediaPermission(mediaTypes))
+    mediaPermissionQueue = permissionRequest
+    void permissionRequest
       .then((allowed) => callback(allowed && mediaTypes.every((type) => grantedMediaTypes.has(type))))
       .catch(() => callback(false))
-      .finally(() => {
-        if (mediaPermissionPrompt === prompt) mediaPermissionPrompt = null
-      })
   })
 
   pulsoSession.setDisplayMediaRequestHandler(async (request, callback) => {
-    if (!isTrustedDisplayRequest(request)) {
+    const expectedFrame = mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow.webContents.mainFrame
+      : null
+    if (!isTrustedDisplayRequest(request, expectedFrame)) {
       callback({})
       return
     }
@@ -260,20 +265,36 @@ function createMainWindow() {
 
   mainWindow.setMenuBarVisibility(false)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isPulsoUrl(url)) {
+      void mainWindow?.loadURL(url)
+      return { action: 'deny' }
+    }
     const external = safeExternalUrl(url)
     if (external) void shell.openExternal(external)
     return { action: 'deny' }
   })
   mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault())
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!isAllowedMainNavigation(url)) event.preventDefault()
+    if (isAllowedMainNavigation(url)) return
+    event.preventDefault()
+    const external = safeExternalUrl(url)
+    if (external) void shell.openExternal(external)
   })
   mainWindow.webContents.on('will-redirect', (event, url) => {
     if (!isPulsoUrl(url)) event.preventDefault()
   })
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, _description, validatedUrl, isMainFrame) => {
     if (!isMainFrame || errorCode === -3 || !isPulsoUrl(validatedUrl)) return
-    void mainWindow?.loadFile(path.join(__dirname, 'offline.html'))
+    lastPulsoUrl = validatedUrl
+    void mainWindow?.loadFile(path.join(__dirname, 'offline.html'), {
+      query: { returnTo: lastPulsoUrl },
+    })
+  })
+  mainWindow.webContents.on('did-navigate', (_event, url) => {
+    if (isPulsoUrl(url)) lastPulsoUrl = url
+  })
+  mainWindow.webContents.on('did-navigate-in-page', (_event, url) => {
+    if (isPulsoUrl(url)) lastPulsoUrl = url
   })
   mainWindow.webContents.once('did-finish-load', async () => {
     if (!smokeTest || !mainWindow || mainWindow.isDestroyed()) return

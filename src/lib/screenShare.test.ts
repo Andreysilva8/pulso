@@ -7,7 +7,8 @@ import {
   SCREEN_SHARE_VIDEO_CONSTRAINTS,
   SCREEN_SHARE_WIDTH,
   configureScreenSender,
-  selectSafeScreenAudio,
+  createScreenShareDisplayOptions,
+  prepareSafeScreenAudio,
 } from './screenShare'
 
 describe('screen-share quality profile', () => {
@@ -26,23 +27,35 @@ describe('screen-share quality profile', () => {
     expect(SCREEN_SHARE_MAX_BITRATE).toBeGreaterThanOrEqual(10_000_000)
   })
 
-  it('excludes the Pulso tab and asks the browser for isolated window audio', () => {
+  it('offers protected system audio and excludes the Pulso tab', () => {
     expect(SCREEN_SHARE_DISPLAY_OPTIONS).toMatchObject({
       selfBrowserSurface: 'exclude',
       windowAudio: 'window',
-      systemAudio: 'exclude',
+      systemAudio: 'include',
+      monitorTypeSurfaces: 'include',
+      surfaceSwitching: 'exclude',
       preferCurrentTab: false,
       audio: {
         restrictOwnAudio: { ideal: true },
+        suppressLocalAudioPlayback: { ideal: true },
       },
     })
   })
 
-  it('removes system-wide audio before it can create a feedback loop', () => {
+  it('only requests experimental audio constraints when the browser supports them', () => {
+    const options = createScreenShareDisplayOptions({})
+    expect(options.audio).toMatchObject({ echoCancellation: { ideal: true } })
+    expect(options.audio).not.toHaveProperty('restrictOwnAudio')
+    expect(options.audio).not.toHaveProperty('suppressLocalAudioPlayback')
+  })
+
+  it('keeps system-wide audio when the browser confirms own-audio filtering', async () => {
     const audioTrack = {
       readyState: 'live',
       stop: vi.fn(),
       contentHint: '',
+      getSettings: () => ({ restrictOwnAudio: true }),
+      applyConstraints: vi.fn(),
     } as unknown as MediaStreamTrack
     const removeTrack = vi.fn()
     const stream = {
@@ -51,20 +64,73 @@ describe('screen-share quality profile', () => {
       removeTrack,
     } as unknown as MediaStream
 
-    expect(selectSafeScreenAudio(stream)).toMatchObject({
-      track: null,
-      blockedSystemAudio: true,
+    await expect(prepareSafeScreenAudio(stream)).resolves.toMatchObject({
+      track: audioTrack,
+      ownAudioRestricted: true,
+      blockedSystemAudio: false,
+      systemWide: true,
       displaySurface: 'monitor',
+    })
+    expect(audioTrack.applyConstraints).not.toHaveBeenCalled()
+    expect(audioTrack.stop).not.toHaveBeenCalled()
+    expect(removeTrack).not.toHaveBeenCalled()
+  })
+
+  it('applies strict filtering after capture before accepting monitor audio', async () => {
+    let restricted = false
+    const audioTrack = {
+      readyState: 'live',
+      stop: vi.fn(),
+      contentHint: '',
+      getSettings: () => ({ restrictOwnAudio: restricted }),
+      applyConstraints: vi.fn().mockImplementation(async () => { restricted = true }),
+    } as unknown as MediaStreamTrack
+    const stream = {
+      getVideoTracks: () => [{ getSettings: () => ({ displaySurface: 'monitor' }) }],
+      getAudioTracks: () => [audioTrack],
+      removeTrack: vi.fn(),
+    } as unknown as MediaStream
+
+    await expect(prepareSafeScreenAudio(stream)).resolves.toMatchObject({
+      track: audioTrack,
+      ownAudioRestricted: true,
+      blockedSystemAudio: false,
+    })
+    expect(audioTrack.applyConstraints).toHaveBeenCalledWith({ restrictOwnAudio: { exact: true } })
+  })
+
+  it('blocks unfiltered monitor audio before it reaches WebRTC or the relay', async () => {
+    const audioTrack = {
+      readyState: 'live',
+      stop: vi.fn(),
+      contentHint: '',
+      getSettings: () => ({ restrictOwnAudio: false }),
+      applyConstraints: vi.fn().mockRejectedValue(new DOMException('unsupported', 'OverconstrainedError')),
+    } as unknown as MediaStreamTrack
+    const removeTrack = vi.fn()
+    const stream = {
+      getVideoTracks: () => [{ getSettings: () => ({ displaySurface: 'monitor' }) }],
+      getAudioTracks: () => [audioTrack],
+      removeTrack,
+    } as unknown as MediaStream
+
+    await expect(prepareSafeScreenAudio(stream)).resolves.toMatchObject({
+      track: null,
+      ownAudioRestricted: false,
+      blockedSystemAudio: true,
+      systemWide: true,
     })
     expect(audioTrack.stop).toHaveBeenCalledOnce()
     expect(removeTrack).toHaveBeenCalledWith(audioTrack)
   })
 
-  it('keeps isolated window audio available to the call', () => {
+  it('keeps isolated window audio available to the call', async () => {
     const audioTrack = {
       readyState: 'live',
       stop: vi.fn(),
       contentHint: '',
+      getSettings: () => ({}),
+      applyConstraints: vi.fn(),
     } as unknown as MediaStreamTrack
     const stream = {
       getVideoTracks: () => [{ getSettings: () => ({ displaySurface: 'window' }) }],
@@ -72,11 +138,13 @@ describe('screen-share quality profile', () => {
       removeTrack: vi.fn(),
     } as unknown as MediaStream
 
-    expect(selectSafeScreenAudio(stream)).toMatchObject({
+    await expect(prepareSafeScreenAudio(stream)).resolves.toMatchObject({
       track: audioTrack,
       blockedSystemAudio: false,
+      systemWide: false,
       displaySurface: 'window',
     })
+    expect(audioTrack.applyConstraints).not.toHaveBeenCalled()
     expect(audioTrack.stop).not.toHaveBeenCalled()
     expect(audioTrack.contentHint).toBe('music')
   })

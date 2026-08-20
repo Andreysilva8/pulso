@@ -313,6 +313,7 @@ export default function App() {
               localMedia={localMedia}
               screenShareQuality={call.screenShareQuality}
               screenAudioOn={call.screenAudioOn}
+              screenAudioSystemWide={call.screenAudioSystemWide}
               screenAudioProtected={call.screenAudioProtected}
               onResumeRelayAudio={(peerId) => void call.resumeRelayAudio(peerId)}
               onScreenVolumeChange={call.setRelayScreenVolume}
@@ -397,6 +398,7 @@ export default function App() {
           audioInputDevices={call.audioInputDevices}
           selectedMicrophoneId={call.selectedMicrophoneId}
           microphoneSwitching={call.microphoneSwitching}
+          cameraSwitching={call.cameraSwitching}
           screenShareStarting={call.screenShareStarting}
           onToggleMicrophone={() => void call.toggleMicrophone()}
           onSelectMicrophone={(deviceId) => void call.selectMicrophone(deviceId)}
@@ -423,6 +425,7 @@ export default function App() {
         audioInputDevices={call.audioInputDevices}
         selectedMicrophoneId={call.selectedMicrophoneId}
         microphoneSwitching={call.microphoneSwitching}
+        cameraSwitching={call.cameraSwitching}
         mediaPreparing={call.mediaPreparing}
         error={call.mediaError}
         joining={call.status === 'joining'}

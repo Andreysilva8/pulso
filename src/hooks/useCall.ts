@@ -6,10 +6,10 @@ import type {
   SignalPayload,
 } from '../types'
 import {
-  SCREEN_SHARE_DISPLAY_OPTIONS,
   configureScreenSender,
   configureScreenTrack,
-  selectSafeScreenAudio,
+  createScreenShareDisplayOptions,
+  prepareSafeScreenAudio,
   type ScreenShareQuality,
 } from '../lib/screenShare'
 import {
@@ -104,6 +104,23 @@ export function microphoneConstraint(deviceId: string): true | MediaTrackConstra
   return deviceId ? { deviceId: { exact: deviceId } } : true
 }
 
+export function previewMediaConstraints(deviceId: string): MediaStreamConstraints {
+  return {
+    audio: microphoneConstraint(deviceId),
+    // Camera access is requested only after the user presses the camera button.
+    video: false,
+  }
+}
+
+export function releaseCameraTracks(stream: MediaStream | null) {
+  if (!stream) return
+  for (const track of [...stream.getVideoTracks()]) {
+    track.onended = null
+    stream.removeTrack(track)
+    track.stop()
+  }
+}
+
 export function useCall({
   clientId,
   realtimeStatus,
@@ -125,15 +142,17 @@ export function useCall({
   const [remoteScreenAudioStreams, setRemoteScreenAudioStreams] = useState<Map<string, MediaStream>>(new Map())
   const [connectionStates, setConnectionStates] = useState<Map<string, RTCPeerConnectionState>>(new Map())
   const [microphoneOn, setMicrophoneOn] = useState(true)
-  const [cameraOn, setCameraOn] = useState(true)
+  const [cameraOn, setCameraOn] = useState(false)
   const [sharingScreen, setSharingScreen] = useState(false)
   const [screenAudioOn, setScreenAudioOn] = useState(false)
+  const [screenAudioSystemWide, setScreenAudioSystemWide] = useState(false)
   const [screenAudioProtected, setScreenAudioProtected] = useState(false)
   const [screenShareQuality, setScreenShareQuality] = useState<ScreenShareQuality | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [audioInputDevices, setAudioInputDevices] = useState<AudioInputOption[]>([])
   const [selectedMicrophoneId, setSelectedMicrophoneId] = useState('')
   const [microphoneSwitching, setMicrophoneSwitching] = useState(false)
+  const [cameraSwitching, setCameraSwitching] = useState(false)
   const [mediaPreparing, setMediaPreparing] = useState(false)
   const [screenShareStarting, setScreenShareStarting] = useState(false)
   const [fallbackFrames, setFallbackFrames] = useState<Map<string, { dataUrl: string; receivedAt: number }>>(new Map())
@@ -145,7 +164,7 @@ export function useCall({
   const channelIdRef = useRef<string | null>(null)
   const statusRef = useRef<CallStatus>('idle')
   const microphoneOnRef = useRef(true)
-  const cameraOnRef = useRef(true)
+  const cameraOnRef = useRef(false)
   const sharingScreenRef = useRef(false)
   const screenAudioOnRef = useRef(false)
   const selectedMicrophoneIdRef = useRef('')
@@ -154,6 +173,8 @@ export function useCall({
   const preparePromiseRef = useRef<Promise<MediaStream | null> | null>(null)
   const pendingMicrophoneTrackRef = useRef<MediaStreamTrack | null>(null)
   const microphoneSwitchRequestRef = useRef(0)
+  const cameraSwitchingRef = useRef(false)
+  const cameraSwitchRequestRef = useRef(0)
   const screenShareStartingRef = useRef(false)
   const screenShareRequestRef = useRef(0)
   const screenRelayRef = useRef<ScreenRelayController | null>(null)
@@ -316,7 +337,9 @@ export function useCall({
     const screenAudioTrack = sharingScreenRef.current
       ? screenStreamRef.current?.getAudioTracks().find((track) => track.readyState === 'live') || null
       : null
-    const cameraTrack = localStreamRef.current?.getVideoTracks()[0] || null
+    const cameraTrack = cameraOnRef.current
+      ? localStreamRef.current?.getVideoTracks().find((track) => track.readyState === 'live') || null
+      : null
     const screenTrack = screenStreamRef.current?.getVideoTracks()[0] || null
     const videoTrack = sharingScreenRef.current ? screenTrack : cameraTrack
 
@@ -650,31 +673,12 @@ export function useCall({
     const operation = (async () => {
       let stream: MediaStream | null = null
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: microphoneConstraint(selectedMicrophoneIdRef.current),
-          video: cameraOnRef.current,
-        })
+        stream = await navigator.mediaDevices.getUserMedia(
+          previewMediaConstraints(selectedMicrophoneIdRef.current),
+        )
       } catch (firstError) {
         if (requestEpoch !== mediaEpochRef.current) return null
-        if (cameraOnRef.current && firstError instanceof DOMException && firstError.name !== 'NotAllowedError') {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({
-              audio: microphoneConstraint(selectedMicrophoneIdRef.current),
-              video: false,
-            })
-            if (requestEpoch !== mediaEpochRef.current) {
-              for (const track of stream.getTracks()) track.stop()
-              return null
-            }
-            cameraOnRef.current = false
-            setCameraOn(false)
-            setMediaError('A câmera não está disponível; você ainda pode entrar somente com áudio.')
-          } catch (audioError) {
-            if (requestEpoch === mediaEpochRef.current) setMediaError(describeMediaError(audioError))
-          }
-        } else {
-          setMediaError(describeMediaError(firstError))
-        }
+        setMediaError(describeMediaError(firstError))
       }
 
       if (requestEpoch !== mediaEpochRef.current) {
@@ -683,6 +687,7 @@ export function useCall({
       }
 
       if (stream) {
+        releaseCameraTracks(stream)
         for (const track of stream.getAudioTracks()) {
           track.enabled = microphoneOnRef.current
           track.onended = () => { void recoverMicrophoneRef.current() }
@@ -832,6 +837,7 @@ export function useCall({
     mediaEpochRef.current += 1
     preparePromiseRef.current = null
     microphoneSwitchRequestRef.current += 1
+    cameraSwitchRequestRef.current += 1
     for (const track of localStreamRef.current?.getTracks() || []) {
       track.onended = null
       track.stop()
@@ -842,7 +848,11 @@ export function useCall({
     setLocalStream(null)
     setMediaPreparing(false)
     setMicrophoneSwitching(false)
+    setCameraSwitching(false)
     microphoneSwitchingRef.current = false
+    cameraSwitchingRef.current = false
+    cameraOnRef.current = false
+    setCameraOn(false)
     setStatus('idle')
     statusRef.current = 'idle'
     setMediaError(null)
@@ -870,6 +880,7 @@ export function useCall({
     setScreenStream(null)
     setSharingScreen(false)
     setScreenAudioOn(false)
+    setScreenAudioSystemWide(false)
     setScreenAudioProtected(false)
     setScreenShareQuality(null)
     for (const track of stream?.getTracks() || []) {
@@ -887,6 +898,7 @@ export function useCall({
     mediaEpochRef.current += 1
     preparePromiseRef.current = null
     microphoneSwitchRequestRef.current += 1
+    cameraSwitchRequestRef.current += 1
     screenShareRequestRef.current += 1
     leaveRealtimeCall()
     closeAllPeers()
@@ -909,6 +921,7 @@ export function useCall({
     statusRef.current = 'idle'
     sharingScreenRef.current = false
     screenAudioOnRef.current = false
+    cameraOnRef.current = false
     setLocalStream(null)
     setScreenStream(null)
     setScreenShareQuality(null)
@@ -920,11 +933,15 @@ export function useCall({
     setRelayAudioBlocked(new Map())
     setSharingScreen(false)
     setScreenAudioOn(false)
+    setScreenAudioSystemWide(false)
     setScreenAudioProtected(false)
+    setCameraOn(false)
     setMediaPreparing(false)
     setMicrophoneSwitching(false)
+    setCameraSwitching(false)
     setScreenShareStarting(false)
     microphoneSwitchingRef.current = false
+    cameraSwitchingRef.current = false
     screenShareStartingRef.current = false
     setChannelId(null)
     setStatus('idle')
@@ -978,32 +995,68 @@ export function useCall({
   }, [currentMediaState, refreshAudioInputs, syncPeerSenders, updateRealtimeCall])
 
   const toggleCamera = useCallback(async () => {
-    let track = localStreamRef.current?.getVideoTracks().find((item) => item.readyState === 'live')
-    const nextState = !cameraOnRef.current
+    if (cameraSwitchingRef.current || !navigator.mediaDevices?.getUserMedia) return
+    const switchRequest = ++cameraSwitchRequestRef.current
+    const requestEpoch = mediaEpochRef.current
+    cameraSwitchingRef.current = true
+    setCameraSwitching(true)
+    setMediaError(null)
 
-    if (nextState && !track && navigator.mediaDevices?.getUserMedia) {
-      try {
-        const addition = await navigator.mediaDevices.getUserMedia({ video: true })
-        track = addition.getVideoTracks()[0]
-        if (track) {
-          const targetStream = localStreamRef.current || new MediaStream()
-          targetStream.addTrack(track)
-          localStreamRef.current = targetStream
-          setLocalStream(targetStream)
-          if (!sharingScreenRef.current) {
-            await Promise.allSettled([...peerRecordsRef.current.values()].map(syncPeerSenders))
-          }
-        }
-      } catch (error) {
-        setMediaError(describeMediaError(error))
+    try {
+      if (cameraOnRef.current) {
+        const currentStream = localStreamRef.current
+        releaseCameraTracks(currentStream)
+        const remainingTracks = currentStream?.getTracks().filter((track) => track.readyState === 'live') || []
+        const nextStream = remainingTracks.length ? new MediaStream(remainingTracks) : null
+        localStreamRef.current = nextStream
+        setLocalStream(nextStream)
+        cameraOnRef.current = false
+        setCameraOn(false)
+        await Promise.allSettled([...peerRecordsRef.current.values()].map(syncPeerSenders))
+        if (statusRef.current === 'joined') updateRealtimeCall(currentMediaState())
         return
       }
-    }
 
-    if (track) track.enabled = nextState
-    cameraOnRef.current = Boolean(track) && nextState
-    setCameraOn(cameraOnRef.current)
-    if (statusRef.current === 'joined') updateRealtimeCall(currentMediaState())
+      const addition = await navigator.mediaDevices.getUserMedia({ audio: false, video: true })
+      const track = addition.getVideoTracks()[0] || null
+      for (const extraTrack of addition.getTracks()) {
+        if (extraTrack !== track) extraTrack.stop()
+      }
+      if (!track) throw new DOMException('Câmera indisponível', 'NotFoundError')
+      if (requestEpoch !== mediaEpochRef.current || statusRef.current === 'idle') {
+        track.stop()
+        return
+      }
+
+      track.enabled = true
+      track.onended = () => {
+        const currentStream = localStreamRef.current
+        currentStream?.removeTrack(track)
+        const remainingTracks = currentStream?.getTracks().filter((item) => item.readyState === 'live') || []
+        const nextStream = remainingTracks.length ? new MediaStream(remainingTracks) : null
+        localStreamRef.current = nextStream
+        setLocalStream(nextStream)
+        cameraOnRef.current = false
+        setCameraOn(false)
+        void Promise.allSettled([...peerRecordsRef.current.values()].map(syncPeerSenders))
+        if (statusRef.current === 'joined') updateRealtimeCall(currentMediaState())
+      }
+      const audioTracks = localStreamRef.current?.getAudioTracks().filter((item) => item.readyState === 'live') || []
+      const nextStream = new MediaStream([...audioTracks, track])
+      localStreamRef.current = nextStream
+      setLocalStream(nextStream)
+      cameraOnRef.current = true
+      setCameraOn(true)
+      await Promise.allSettled([...peerRecordsRef.current.values()].map(syncPeerSenders))
+      if (statusRef.current === 'joined') updateRealtimeCall(currentMediaState())
+    } catch (error) {
+      if (requestEpoch === mediaEpochRef.current) setMediaError(describeMediaError(error))
+    } finally {
+      if (cameraSwitchRequestRef.current === switchRequest) {
+        cameraSwitchingRef.current = false
+        setCameraSwitching(false)
+      }
+    }
   }, [currentMediaState, syncPeerSenders, updateRealtimeCall])
 
   const startScreenShare = useCallback(async () => {
@@ -1020,7 +1073,9 @@ export function useCall({
     setScreenShareStarting(true)
     try {
       setMediaError(null)
-      capturedStream = await navigator.mediaDevices.getDisplayMedia(SCREEN_SHARE_DISPLAY_OPTIONS)
+      capturedStream = await navigator.mediaDevices.getDisplayMedia(
+        createScreenShareDisplayOptions(navigator.mediaDevices.getSupportedConstraints?.()),
+      )
       if (requestEpoch !== mediaEpochRef.current || statusRef.current !== 'joined') {
         for (const track of capturedStream.getTracks()) track.stop()
         return
@@ -1030,7 +1085,7 @@ export function useCall({
         for (const track of capturedStream.getTracks()) track.stop()
         throw new Error('A captura não forneceu vídeo.')
       }
-      const screenAudioSafety = selectSafeScreenAudio(capturedStream)
+      const screenAudioSafety = await prepareSafeScreenAudio(capturedStream)
       const screenAudioTrack = screenAudioSafety.track
 
       const quality = await configureScreenTrack(screenTrack)
@@ -1047,6 +1102,7 @@ export function useCall({
       setScreenStream(capturedStream)
       setSharingScreen(true)
       setScreenAudioOn(Boolean(screenAudioTrack))
+      setScreenAudioSystemWide(screenAudioSafety.systemWide)
       setScreenAudioProtected(screenAudioSafety.blockedSystemAudio)
       setScreenShareQuality(quality)
       screenTrack.onended = () => { void stopScreenShare() }
@@ -1054,6 +1110,8 @@ export function useCall({
         screenAudioTrack.onended = () => {
           screenAudioOnRef.current = false
           setScreenAudioOn(false)
+          setScreenAudioSystemWide(false)
+          setScreenAudioProtected(false)
           void Promise.allSettled([...peerRecordsRef.current.values()].map(syncPeerSenders))
           if (statusRef.current === 'joined') updateRealtimeCall(currentMediaState())
         }
@@ -1124,12 +1182,14 @@ export function useCall({
     cameraOn,
     sharingScreen,
     screenAudioOn,
+    screenAudioSystemWide,
     screenAudioProtected,
     screenShareQuality,
     mediaError,
     audioInputDevices,
     selectedMicrophoneId,
     microphoneSwitching,
+    cameraSwitching,
     mediaPreparing,
     screenShareStarting,
     fallbackFrames,

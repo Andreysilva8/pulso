@@ -54,7 +54,8 @@ Ela usa por padrão 1 OCPU, 6 GB de RAM e boot de 50 GB. A aplicação fica prot
 - áudio, vídeo, mute e câmera on/off;
 - compartilhamento de tela solicitando Full HD (1920×1080), 60 fps e até 12 Mbps no caminho WebRTC direto, priorizando fluidez quando a rede não sustenta resolução e taxa máximas ao mesmo tempo;
 - detecção de vídeo WebRTC congelado e modo compatível de tela/áudio a 10 fps, ativado sob demanda somente para o espectador afetado;
-- áudio isolado de aba/janela durante a transmissão, com exclusão da própria aba do Pulso e bloqueio do áudio completo do sistema para impedir retorno infinito das vozes da chamada;
+- áudio de aba, janela e tela inteira quando o navegador confirma o filtro antieco; áudio de sistema sem esse filtro é bloqueado antes de chegar ao WebRTC/relay;
+- câmera desligada por padrão, adquirida somente após clique explícito e completamente liberada ao desligar;
 - seleção e troca de microfone durante a chamada, sem desconectar o participante;
 - menu de clique direito por participante com mudo local e controles independentes para voz e áudio da transmissão;
 - chat separado dentro de cada chamada;
@@ -99,7 +100,7 @@ Node.js + Express + ws
 - A chamada usa malha P2P, ideal para aproximadamente 2–4 pessoas. Salas maiores devem usar um SFU, como LiveKit, mediasoup ou Janus.
 - O STUN padrão não atravessa todas as redes. Produção precisa de TURN com credenciais temporárias. Copie `.env.example` para `.env` e configure `VITE_ICE_SERVERS`.
 - Quando o vídeo direto ainda não entregou quadros, o modo compatível usa até 960×540 a aproximadamente 5 fps. Ele evita a tela presa em “Conectando”, mas a cópia reduzida passa pelo servidor e não substitui TURN/SFU em produção.
-- Para evitar eco recursivo, o Pulso não retransmite o áudio completo da opção “Tela inteira”. Para transmitir som, escolha uma aba ou janela e marque “Compartilhar áudio”; algumas combinações de navegador e sistema operacional não fornecem áudio isolado de janela.
+- Em Chrome 141 ou posterior, “Tela inteira” pode transmitir áudio com `restrictOwnAudio`; marque “Compartilhar áudio”. Em navegadores que não confirmam essa proteção, o Pulso mantém o vídeo mas bloqueia o áudio do sistema para impedir retorno infinito.
 - O servidor TURN não acompanha este repositório.
 
 ## Scripts

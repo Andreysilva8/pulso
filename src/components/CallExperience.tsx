@@ -69,6 +69,7 @@ export function PrejoinDialog({
   audioInputDevices,
   selectedMicrophoneId,
   microphoneSwitching,
+  cameraSwitching,
   mediaPreparing,
   error,
   joining,
@@ -87,6 +88,7 @@ export function PrejoinDialog({
   audioInputDevices: AudioInputOption[]
   selectedMicrophoneId: string
   microphoneSwitching: boolean
+  cameraSwitching: boolean
   mediaPreparing: boolean
   error: string | null
   joining: boolean
@@ -115,7 +117,7 @@ export function PrejoinDialog({
           <span className="eyebrow"><span className="live-dot" /> Pré-sala</span>
           <h2 id="prejoin-title">Entre no ritmo de <em>{room.name}</em></h2>
           <p>Confira como você vai aparecer. Você pode mudar câmera e microfone a qualquer momento.</p>
-          <div className="prejoin-safety"><ShieldCheck size={17} /> A prévia é local; nada é enviado antes de você entrar.</div>
+          <div className="prejoin-safety"><ShieldCheck size={17} /> A câmera começa desligada e só é acessada quando você clicar em ligar.</div>
         </div>
         <MediaPreview stream={stream} cameraOn={cameraOn} profile={profile} />
         {error && <div className="permission-note" role="alert">{error}</div>}
@@ -130,9 +132,9 @@ export function PrejoinDialog({
             />
             <IconButton
               icon={cameraOn ? Video : VideoOff}
-              label={cameraOn ? 'Desligar câmera' : 'Ligar câmera'}
+              label={cameraSwitching ? 'Aguarde a câmera' : cameraOn ? 'Desligar câmera' : 'Ligar câmera'}
               active={cameraOn}
-              disabled={mediaPreparing}
+              disabled={mediaPreparing || cameraSwitching}
               onClick={onToggleCamera}
             />
             <MicrophoneSelect
@@ -142,8 +144,8 @@ export function PrejoinDialog({
               onSelect={onSelectMicrophone}
             />
           </div>
-          <button className="primary-button primary-button--wide" type="button" onClick={onJoin} disabled={joining || mediaPreparing || microphoneSwitching}>
-            <span>{mediaPreparing ? 'Preparando mídia…' : joining ? 'Conectando…' : 'Entrar na conversa'}</span>
+          <button className="primary-button primary-button--wide" type="button" onClick={onJoin} disabled={joining || mediaPreparing || microphoneSwitching || cameraSwitching}>
+            <span>{mediaPreparing ? 'Preparando mídia…' : cameraSwitching ? 'Abrindo câmera…' : joining ? 'Conectando…' : 'Entrar na conversa'}</span>
             <span className="primary-button__icon"><Users size={18} /></span>
           </button>
         </div>
@@ -159,6 +161,7 @@ export function CallDock({
   audioInputDevices,
   selectedMicrophoneId,
   microphoneSwitching,
+  cameraSwitching,
   screenShareStarting,
   onToggleMicrophone,
   onSelectMicrophone,
@@ -172,6 +175,7 @@ export function CallDock({
   audioInputDevices: AudioInputOption[]
   selectedMicrophoneId: string
   microphoneSwitching: boolean
+  cameraSwitching: boolean
   screenShareStarting: boolean
   onToggleMicrophone: () => void
   onSelectMicrophone: (deviceId: string) => void
@@ -201,6 +205,7 @@ export function CallDock({
         icon={cameraOn ? Video : VideoOff}
         label={cameraOn ? 'Desligar câmera — Alt+V' : 'Ligar câmera — Alt+V'}
         active={cameraOn}
+        disabled={cameraSwitching}
         onClick={onToggleCamera}
       />
       <span className="call-dock__divider" />
@@ -233,6 +238,7 @@ export function CallStage({
   localMedia,
   screenShareQuality,
   screenAudioOn,
+  screenAudioSystemWide,
   screenAudioProtected,
   onResumeRelayAudio,
   onScreenVolumeChange,
@@ -257,6 +263,7 @@ export function CallStage({
   localMedia: MediaState
   screenShareQuality: ScreenShareQuality | null
   screenAudioOn: boolean
+  screenAudioSystemWide: boolean
   screenAudioProtected: boolean
   onResumeRelayAudio: (peerId: string) => void
   onScreenVolumeChange: (peerId: string, volume: number) => void
@@ -319,9 +326,11 @@ export function CallStage({
           <span className={`sharing-banner__audio ${screenAudioOn ? 'is-on' : 'is-off'}`}>
             {screenAudioOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
             {screenAudioOn
-              ? 'Áudio isolado da aba ou janela incluído'
+              ? screenAudioSystemWide
+                ? 'Áudio da tela inteira incluído · proteção antieco ativa'
+                : 'Áudio isolado da aba ou janela incluído'
               : screenAudioProtected
-                ? 'Proteção antieco ativa · compartilhe uma aba ou janela para transmitir o áudio'
+                ? 'Áudio do sistema bloqueado por segurança · atualize o Chrome ou compartilhe uma aba/janela'
                 : 'Sem áudio — marque “Compartilhar áudio” no seletor do navegador'}
           </span>
           <span className="sharing-banner__compatibility">Se a conexão direta falhar, uma cópia reduzida passa pelo servidor.</span>

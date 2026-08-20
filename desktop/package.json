@@ -13,9 +13,10 @@
   "scripts": {
     "icon": "node scripts/generate-icon.cjs",
     "start": "electron .",
-    "smoke": "electron --in-process-gpu --disable-gpu-compositing . --smoke-test",
+    "smoke": "node scripts/smoke-dev.cjs",
+    "smoke:packaged": "node scripts/smoke-packaged.cjs",
     "test": "node --test test/*.test.cjs",
-    "make": "npm run icon && npm test && electron-builder --win nsis --x64"
+    "make": "npm run icon && npm test && npm run smoke && electron-builder --win nsis --x64 && npm run smoke:packaged"
   },
   "devDependencies": {
     "@electron/fuses": "2.1.3",

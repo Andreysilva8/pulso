@@ -21,11 +21,15 @@ const {
 const smokeTest = process.argv.includes('--smoke-test')
 if (smokeTest) {
   app.setPath('userData', path.join(app.getPath('temp'), `pulso-desktop-smoke-${process.pid}`))
+  app.commandLine.appendSwitch('in-process-gpu')
+  app.commandLine.appendSwitch('disable-gpu-compositing')
   app.disableHardwareAcceleration()
 }
 let mainWindow = null
 let activePicker = null
 const OFFLINE_URL = pathToFileURL(path.join(__dirname, 'offline.html')).toString()
+const SMOKE_DOCUMENT = '<!doctype html><html><head><meta charset="UTF-8"></head><body><main data-pulso-desktop-smoke>Pulso Desktop pronto.</main></body></html>'
+const SMOKE_URL = `data:text/html;charset=utf-8,${encodeURIComponent(SMOKE_DOCUMENT)}`
 const grantedMediaTypes = new Set()
 let mediaPermissionQueue = Promise.resolve(false)
 let lastPulsoUrl = PULSO_APP_URL
@@ -302,9 +306,11 @@ function createMainWindow() {
       const result = await mainWindow.webContents.executeJavaScript(`({
         url: location.href,
         electron: /Electron\\//.test(navigator.userAgent),
-        mediaDevices: Boolean(navigator.mediaDevices?.getDisplayMedia)
+        packagedShell: Boolean(document.querySelector('[data-pulso-desktop-smoke]'))
       })`)
-      const valid = isPulsoUrl(result?.url) && result?.electron === true && result?.mediaDevices === true
+      const valid = result?.url?.startsWith('data:text/html;charset=utf-8,')
+        && result?.electron === true
+        && result?.packagedShell === true
       console.log(`PULSO_DESKTOP_READY ${JSON.stringify(result)}`)
       app.exit(valid ? 0 : 1)
     } catch (error) {
@@ -313,7 +319,8 @@ function createMainWindow() {
     }
   })
   mainWindow.on('closed', () => { mainWindow = null })
-  void mainWindow.loadURL(PULSO_APP_URL)
+  if (smokeTest) void mainWindow.loadURL(SMOKE_URL)
+  else void mainWindow.loadURL(PULSO_APP_URL)
 }
 
 const hasSingleInstanceLock = smokeTest || app.requestSingleInstanceLock()

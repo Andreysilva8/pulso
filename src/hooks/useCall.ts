@@ -9,7 +9,10 @@ import {
   configureScreenSender,
   configureScreenTrack,
   createScreenShareDisplayOptions,
+  DEFAULT_SCREEN_SHARE_SETTINGS,
   prepareSafeScreenAudio,
+  screenShareProfile,
+  type ScreenShareSettings,
   type ScreenShareQuality,
 } from '../lib/screenShare'
 import {
@@ -148,6 +151,9 @@ export function useCall({
   const [screenAudioSystemWide, setScreenAudioSystemWide] = useState(false)
   const [screenAudioProtected, setScreenAudioProtected] = useState(false)
   const [screenShareQuality, setScreenShareQuality] = useState<ScreenShareQuality | null>(null)
+  const [activeScreenShareSettings, setActiveScreenShareSettings] = useState<ScreenShareSettings>(
+    DEFAULT_SCREEN_SHARE_SETTINGS,
+  )
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [audioInputDevices, setAudioInputDevices] = useState<AudioInputOption[]>([])
   const [selectedMicrophoneId, setSelectedMicrophoneId] = useState('')
@@ -177,6 +183,7 @@ export function useCall({
   const cameraSwitchRequestRef = useRef(0)
   const screenShareStartingRef = useRef(false)
   const screenShareRequestRef = useRef(0)
+  const screenShareSettingsRef = useRef<ScreenShareSettings>(DEFAULT_SCREEN_SHARE_SETTINGS)
   const screenRelayRef = useRef<ScreenRelayController | null>(null)
   const screenRelayStartingRef = useRef<Promise<void> | null>(null)
   const screenRelaySubscribersRef = useRef(new Set<string>())
@@ -349,7 +356,11 @@ export function useCall({
       record.videoTransceiver.sender.replaceTrack(videoTrack),
     ])
     if (sharingScreenRef.current) {
-      await configureScreenSender(record.videoTransceiver.sender)
+      await configureScreenSender(
+        record.videoTransceiver.sender,
+        screenShareSettingsRef.current,
+        peerRecordsRef.current.size,
+      )
     }
   }, [])
 
@@ -366,6 +377,7 @@ export function useCall({
 
     const operation = (async () => {
       try {
+        const relayProfile = screenShareProfile(screenShareSettingsRef.current)
         const controller = await startScreenRelay(stream, {
           sendFrame: (dataUrl) => {
             const targets = [...screenRelaySubscribersRef.current]
@@ -375,6 +387,10 @@ export function useCall({
             const targets = [...screenRelaySubscribersRef.current]
             if (targets.length) sendScreenAudio(pcm, sampleRate, sequence, targets)
           },
+        }, {
+          frameRate: screenShareSettingsRef.current.frameRate,
+          maxWidth: relayProfile.width,
+          maxHeight: relayProfile.height,
         })
         if (stream !== screenStreamRef.current || !sharingScreenRef.current
           || !screenRelaySubscribersRef.current.size) {
@@ -402,6 +418,9 @@ export function useCall({
     if (record.restartTimer !== null) window.clearTimeout(record.restartTimer)
     record.pc.close()
     peerRecordsRef.current.delete(peerId)
+    if (sharingScreenRef.current) {
+      void Promise.allSettled([...peerRecordsRef.current.values()].map(syncPeerSenders))
+    }
     screenRelaySubscribersRef.current.delete(peerId)
     stopCompatibilityRelayIfIdle()
     clearFallbackFrame(peerId)
@@ -524,7 +543,7 @@ export function useCall({
       }
     }
 
-    void syncPeerSenders(record)
+    void Promise.allSettled([...peerRecordsRef.current.values()].map(syncPeerSenders))
     return record
   }, [clientId, closeRelayAudioPlayer, sendSignal, syncPeerSenders])
 
@@ -1059,7 +1078,9 @@ export function useCall({
     }
   }, [currentMediaState, syncPeerSenders, updateRealtimeCall])
 
-  const startScreenShare = useCallback(async () => {
+  const startScreenShare = useCallback(async (
+    settings: ScreenShareSettings = DEFAULT_SCREEN_SHARE_SETTINGS,
+  ) => {
     if (!navigator.mediaDevices?.getDisplayMedia || statusRef.current !== 'joined') {
       setMediaError('O compartilhamento de tela não está disponível neste navegador.')
       return
@@ -1070,11 +1091,12 @@ export function useCall({
     const shareRequest = ++screenShareRequestRef.current
     let capturedStream: MediaStream | null = null
     screenShareStartingRef.current = true
+    screenShareSettingsRef.current = settings
     setScreenShareStarting(true)
     try {
       setMediaError(null)
       capturedStream = await navigator.mediaDevices.getDisplayMedia(
-        createScreenShareDisplayOptions(navigator.mediaDevices.getSupportedConstraints?.()),
+        createScreenShareDisplayOptions(navigator.mediaDevices.getSupportedConstraints?.(), settings),
       )
       if (requestEpoch !== mediaEpochRef.current || statusRef.current !== 'joined') {
         for (const track of capturedStream.getTracks()) track.stop()
@@ -1088,7 +1110,7 @@ export function useCall({
       const screenAudioSafety = await prepareSafeScreenAudio(capturedStream)
       const screenAudioTrack = screenAudioSafety.track
 
-      const quality = await configureScreenTrack(screenTrack)
+      const quality = await configureScreenTrack(screenTrack, settings)
       if (requestEpoch !== mediaEpochRef.current || statusRef.current !== 'joined') {
         for (const track of capturedStream.getTracks()) track.stop()
         return
@@ -1104,6 +1126,7 @@ export function useCall({
       setScreenAudioOn(Boolean(screenAudioTrack))
       setScreenAudioSystemWide(screenAudioSafety.systemWide)
       setScreenAudioProtected(screenAudioSafety.blockedSystemAudio)
+      setActiveScreenShareSettings(settings)
       setScreenShareQuality(quality)
       screenTrack.onended = () => { void stopScreenShare() }
       if (screenAudioTrack) {
@@ -1185,6 +1208,7 @@ export function useCall({
     screenAudioSystemWide,
     screenAudioProtected,
     screenShareQuality,
+    activeScreenShareSettings,
     mediaError,
     audioInputDevices,
     selectedMicrophoneId,

@@ -1,13 +1,71 @@
-export const SCREEN_SHARE_WIDTH = 1920
-export const SCREEN_SHARE_HEIGHT = 1080
-export const SCREEN_SHARE_FRAME_RATE = 60
-export const SCREEN_SHARE_MAX_BITRATE = 12_000_000
+export type ScreenShareResolution = 480 | 720 | 1080
+export type ScreenShareFrameRate = 15 | 30 | 60
 
-export const SCREEN_SHARE_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
-  width: { ideal: SCREEN_SHARE_WIDTH, max: SCREEN_SHARE_WIDTH },
-  height: { ideal: SCREEN_SHARE_HEIGHT, max: SCREEN_SHARE_HEIGHT },
-  frameRate: { ideal: SCREEN_SHARE_FRAME_RATE, max: SCREEN_SHARE_FRAME_RATE },
+export type ScreenShareSettings = {
+  resolution: ScreenShareResolution
+  frameRate: ScreenShareFrameRate
 }
+
+export const SCREEN_SHARE_RESOLUTION_OPTIONS = [
+  { resolution: 480, width: 854, label: '480p', description: 'Economiza internet' },
+  { resolution: 720, width: 1280, label: '720p', description: 'Mais estável' },
+  { resolution: 1080, width: 1920, label: '1080p', description: 'Mais detalhes' },
+] as const
+
+export const SCREEN_SHARE_FRAME_RATE_OPTIONS = [15, 30, 60] as const
+
+export const DEFAULT_SCREEN_SHARE_SETTINGS: ScreenShareSettings = {
+  resolution: 720,
+  frameRate: 30,
+}
+
+const BITRATE_BY_RESOLUTION: Record<ScreenShareResolution, Record<ScreenShareFrameRate, number>> = {
+  480: { 15: 700_000, 30: 1_200_000, 60: 2_000_000 },
+  720: { 15: 1_200_000, 30: 3_000_000, 60: 5_000_000 },
+  1080: { 15: 2_200_000, 30: 4_500_000, 60: 8_000_000 },
+}
+
+export function screenShareProfile(settings: ScreenShareSettings = DEFAULT_SCREEN_SHARE_SETTINGS) {
+  const resolution = SCREEN_SHARE_RESOLUTION_OPTIONS.find(
+    (option) => option.resolution === settings.resolution,
+  ) || SCREEN_SHARE_RESOLUTION_OPTIONS[1]
+  return {
+    width: resolution.width,
+    height: resolution.resolution,
+    frameRate: settings.frameRate,
+    maxBitrate: BITRATE_BY_RESOLUTION[resolution.resolution][settings.frameRate],
+    estimatedMbps: BITRATE_BY_RESOLUTION[resolution.resolution][settings.frameRate] / 1_000_000,
+  }
+}
+
+export function screenShareSenderBitrate(
+  settings: ScreenShareSettings = DEFAULT_SCREEN_SHARE_SETTINGS,
+  peerCount = 1,
+) {
+  const profile = screenShareProfile(settings)
+  const uploadShare = Math.max(1, Math.max(1, peerCount) * 0.72)
+  return Math.max(650_000, Math.floor(profile.maxBitrate / uploadShare))
+}
+
+const DEFAULT_SCREEN_SHARE_PROFILE = screenShareProfile()
+
+export const SCREEN_SHARE_WIDTH = DEFAULT_SCREEN_SHARE_PROFILE.width
+export const SCREEN_SHARE_HEIGHT = DEFAULT_SCREEN_SHARE_PROFILE.height
+export const SCREEN_SHARE_FRAME_RATE = DEFAULT_SCREEN_SHARE_PROFILE.frameRate
+export const SCREEN_SHARE_MAX_BITRATE = DEFAULT_SCREEN_SHARE_PROFILE.maxBitrate
+
+export function screenShareVideoConstraints(
+  settings: ScreenShareSettings = DEFAULT_SCREEN_SHARE_SETTINGS,
+): MediaTrackConstraints {
+  const profile = screenShareProfile(settings)
+  return {
+    width: { ideal: profile.width, max: profile.width },
+    height: { ideal: profile.height, max: profile.height },
+    frameRate: { ideal: profile.frameRate, max: profile.frameRate },
+  }
+}
+
+export const SCREEN_SHARE_VIDEO_CONSTRAINTS = screenShareVideoConstraints()
 
 type ScreenAudioConstraints = MediaTrackConstraints & {
   restrictOwnAudio?: ConstrainBoolean
@@ -21,6 +79,7 @@ type ScreenSupportedConstraints = MediaTrackSupportedConstraints & {
 
 export function createScreenShareDisplayOptions(
   supported: ScreenSupportedConstraints = {},
+  settings: ScreenShareSettings = DEFAULT_SCREEN_SHARE_SETTINGS,
 ): DisplayMediaStreamOptions {
   const audio: ScreenAudioConstraints = {
     echoCancellation: { ideal: true },
@@ -31,7 +90,7 @@ export function createScreenShareDisplayOptions(
   if (supported.suppressLocalAudioPlayback) audio.suppressLocalAudioPlayback = { ideal: true }
 
   return {
-    video: SCREEN_SHARE_VIDEO_CONSTRAINTS,
+    video: screenShareVideoConstraints(settings),
     audio,
     systemAudio: 'include',
     windowAudio: 'window',
@@ -103,38 +162,46 @@ export async function prepareSafeScreenAudio(stream: MediaStream): Promise<Scree
   }
 }
 
-export async function configureScreenTrack(track: MediaStreamTrack): Promise<ScreenShareQuality> {
-  if ('contentHint' in track) track.contentHint = 'motion'
+export async function configureScreenTrack(
+  track: MediaStreamTrack,
+  settings: ScreenShareSettings = DEFAULT_SCREEN_SHARE_SETTINGS,
+): Promise<ScreenShareQuality> {
+  if ('contentHint' in track) track.contentHint = settings.frameRate >= 60 ? 'motion' : 'detail'
 
   try {
-    await track.applyConstraints(SCREEN_SHARE_VIDEO_CONSTRAINTS)
+    await track.applyConstraints(screenShareVideoConstraints(settings))
   } catch {
     // Some browsers only apply display constraints during getDisplayMedia.
     // Keep the selected stream instead of aborting the share.
   }
 
-  const settings = track.getSettings()
+  const actual = track.getSettings()
   return {
-    width: settings.width,
-    height: settings.height,
-    frameRate: settings.frameRate,
+    width: actual.width,
+    height: actual.height,
+    frameRate: actual.frameRate,
   }
 }
 
-export async function configureScreenSender(sender: RTCRtpSender) {
+export async function configureScreenSender(
+  sender: RTCRtpSender,
+  settings: ScreenShareSettings = DEFAULT_SCREEN_SHARE_SETTINGS,
+  peerCount = 1,
+) {
   const parameters = sender.getParameters()
   if (!parameters.encodings.length) return false
 
+  const profile = screenShareProfile(settings)
+  const peerBitrate = screenShareSenderBitrate(settings, peerCount)
+
   for (const encoding of parameters.encodings) {
-    encoding.maxBitrate = SCREEN_SHARE_MAX_BITRATE
-    encoding.maxFramerate = SCREEN_SHARE_FRAME_RATE
+    encoding.maxBitrate = peerBitrate
+    encoding.maxFramerate = profile.frameRate
     encoding.scaleResolutionDownBy = 1
     encoding.priority = 'high'
     encoding.networkPriority = 'high'
   }
-  // Preserve motion first. Under congestion the browser may soften the image,
-  // but it should avoid turning a 60 fps share into a frozen slideshow.
-  parameters.degradationPreference = 'maintain-framerate'
+  parameters.degradationPreference = settings.frameRate >= 60 ? 'maintain-framerate' : 'balanced'
 
   try {
     await sender.setParameters(parameters)

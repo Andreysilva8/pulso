@@ -1,8 +1,8 @@
-export const SCREEN_RELAY_FRAME_RATE = 10
+export const SCREEN_RELAY_FRAME_RATE = 12
 export const SCREEN_RELAY_FRAME_INTERVAL = 1_000 / SCREEN_RELAY_FRAME_RATE
-export const SCREEN_RELAY_MAX_WIDTH = 1280
-export const SCREEN_RELAY_MAX_HEIGHT = 720
-export const SCREEN_RELAY_MAX_DATA_URL_LENGTH = 50_000
+export const SCREEN_RELAY_MAX_WIDTH = 960
+export const SCREEN_RELAY_MAX_HEIGHT = 540
+export const SCREEN_RELAY_MAX_DATA_URL_LENGTH = 42_000
 export const SCREEN_RELAY_AUDIO_SAMPLE_RATE = 16_000
 
 export type ScreenRelayController = {
@@ -13,6 +13,12 @@ export type ScreenRelayController = {
 export type ScreenRelayHandlers = {
   sendFrame: (dataUrl: string) => void
   sendAudio: (pcmBase64: string, sampleRate: number, sequence: number) => void
+}
+
+export type ScreenRelayOptions = {
+  frameRate?: number
+  maxWidth?: number
+  maxHeight?: number
 }
 
 export function downsampleToPcm16(
@@ -73,12 +79,17 @@ function canvasToDataUrl(canvas: HTMLCanvasElement, quality: number) {
   })
 }
 
-async function captureFrame(video: HTMLVideoElement, canvas: HTMLCanvasElement) {
+async function captureFrame(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  maxWidth: number,
+  maxHeight: number,
+) {
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return null
   const scale = Math.min(
     1,
-    SCREEN_RELAY_MAX_WIDTH / video.videoWidth,
-    SCREEN_RELAY_MAX_HEIGHT / video.videoHeight,
+    maxWidth / video.videoWidth,
+    maxHeight / video.videoHeight,
   )
   const targetWidth = Math.max(2, Math.round(video.videoWidth * scale))
   const targetHeight = Math.max(2, Math.round(video.videoHeight * scale))
@@ -113,6 +124,7 @@ async function captureFrame(video: HTMLVideoElement, canvas: HTMLCanvasElement) 
 export async function startScreenRelay(
   stream: MediaStream,
   handlers: ScreenRelayHandlers,
+  options: ScreenRelayOptions = {},
 ): Promise<ScreenRelayController> {
   const videoTrack = stream.getVideoTracks().find((track) => track.readyState === 'live')
   if (!videoTrack) throw new Error('A transmissão não contém vídeo.')
@@ -133,12 +145,16 @@ export async function startScreenRelay(
   let audioSequence = 0
   let lastFrame = ''
   let lastFrameSentAt = 0
+  const frameRate = Math.max(1, Math.min(SCREEN_RELAY_FRAME_RATE, options.frameRate || SCREEN_RELAY_FRAME_RATE))
+  const frameInterval = 1_000 / frameRate
+  const maxWidth = Math.max(320, Math.min(SCREEN_RELAY_MAX_WIDTH, options.maxWidth || SCREEN_RELAY_MAX_WIDTH))
+  const maxHeight = Math.max(180, Math.min(SCREEN_RELAY_MAX_HEIGHT, options.maxHeight || SCREEN_RELAY_MAX_HEIGHT))
 
   const emitFrame = async () => {
     if (stopped) return
     const startedAt = performance.now()
     try {
-      const dataUrl = await captureFrame(video, canvas)
+      const dataUrl = await captureFrame(video, canvas, maxWidth, maxHeight)
       const now = Date.now()
       if (dataUrl && (dataUrl !== lastFrame || now - lastFrameSentAt >= 1_000)) {
         lastFrame = dataUrl
@@ -146,7 +162,7 @@ export async function startScreenRelay(
         handlers.sendFrame(dataUrl)
       }
     } finally {
-      const remaining = Math.max(0, SCREEN_RELAY_FRAME_INTERVAL - (performance.now() - startedAt))
+      const remaining = Math.max(0, frameInterval - (performance.now() - startedAt))
       frameTimer = window.setTimeout(() => { void emitFrame() }, remaining)
     }
   }

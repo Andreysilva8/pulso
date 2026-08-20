@@ -52,12 +52,12 @@ Ela usa por padrão 1 OCPU, 6 GB de RAM e boot de 50 GB. A aplicação fica prot
 - presença online e perfil local editável;
 - salas de voz com múltiplos participantes em malha P2P;
 - áudio, vídeo, mute e câmera on/off;
-- compartilhamento de tela solicitando Full HD (1920×1080), 60 fps e até 12 Mbps no caminho WebRTC direto, priorizando fluidez quando a rede não sustenta resolução e taxa máximas ao mesmo tempo;
-- detecção de vídeo WebRTC congelado e modo compatível de tela/áudio a 10 fps, ativado sob demanda somente para o espectador afetado;
+- compartilhamento de tela com perfis selecionáveis de 480p, 720p ou 1080p e 15, 30 ou 60 fps; o padrão é 720p/30 fps para reduzir travamentos, com bitrate adaptado à quantidade de espectadores;
+- detecção de falha real da trilha WebRTC sem confundir uma tela estática com congelamento, e modo compatível de tela/áudio em até 960×540/12 fps, ativado sob demanda somente para o espectador afetado;
 - áudio de aba, janela e tela inteira quando o navegador confirma o filtro antieco; áudio de sistema sem esse filtro é bloqueado antes de chegar ao WebRTC/relay;
 - câmera desligada por padrão, adquirida somente após clique explícito e completamente liberada ao desligar;
 - seleção e troca de microfone durante a chamada, sem desconectar o participante;
-- menu de clique direito por participante com mudo local e controles independentes para voz e áudio da transmissão;
+- menu de clique direito por participante com mudo local e controles independentes para voz e áudio da transmissão; o atalho visual de volume desaparece após 2,5 segundos sem interação;
 - chat separado dentro de cada chamada;
 - convites por URL (`?room=cafe`, por exemplo);
 - negociação WebRTC com offers simultâneas protegidas;
@@ -99,7 +99,7 @@ Node.js + Express + ws
 - A receita OCI ativa uma senha HTTP no Caddy para não deixar esta demo aberta enquanto contas ainda não existem.
 - A chamada usa malha P2P, ideal para aproximadamente 2–4 pessoas. Salas maiores devem usar um SFU, como LiveKit, mediasoup ou Janus.
 - O STUN padrão não atravessa todas as redes. Produção precisa de TURN com credenciais temporárias. Copie `.env.example` para `.env` e configure `VITE_ICE_SERVERS`.
-- Quando o vídeo direto ainda não entregou quadros, o modo compatível usa até 960×540 a aproximadamente 5 fps. Ele evita a tela presa em “Conectando”, mas a cópia reduzida passa pelo servidor e não substitui TURN/SFU em produção.
+- Quando o vídeo direto ainda não entregou quadros, o modo compatível usa até 960×540 a no máximo 12 fps. Ele evita a tela presa em “Conectando”, mas a cópia reduzida passa pelo servidor e não substitui TURN/SFU em produção.
 - Em Chrome 141 ou posterior, “Tela inteira” pode transmitir áudio com `restrictOwnAudio`; marque “Compartilhar áudio”. Em navegadores que não confirmam essa proteção, o Pulso mantém o vídeo mas bloqueia o áudio do sistema para impedir retorno infinito.
 - O servidor TURN não acompanha este repositório.
 

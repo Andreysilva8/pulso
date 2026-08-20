@@ -312,6 +312,7 @@ export default function App() {
               localProfile={profile}
               localMedia={localMedia}
               screenShareQuality={call.screenShareQuality}
+              activeScreenShareSettings={call.activeScreenShareSettings}
               screenAudioOn={call.screenAudioOn}
               screenAudioSystemWide={call.screenAudioSystemWide}
               screenAudioProtected={call.screenAudioProtected}
@@ -400,10 +401,13 @@ export default function App() {
           microphoneSwitching={call.microphoneSwitching}
           cameraSwitching={call.cameraSwitching}
           screenShareStarting={call.screenShareStarting}
+          screenShareViewerCount={activeParticipants.filter((participant) => participant.id !== realtime.clientId).length}
+          activeScreenShareSettings={call.activeScreenShareSettings}
           onToggleMicrophone={() => void call.toggleMicrophone()}
           onSelectMicrophone={(deviceId) => void call.selectMicrophone(deviceId)}
           onToggleCamera={() => void call.toggleCamera()}
-          onToggleScreen={() => call.sharingScreen ? void call.stopScreenShare() : void call.startScreenShare()}
+          onStartScreenShare={(settings) => void call.startScreenShare(settings)}
+          onStopScreenShare={() => void call.stopScreenShare()}
           onLeave={() => { call.leave(); setNotice('Você saiu da conversa.') }}
         />
       )}

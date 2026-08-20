@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Camera,
   Check,
   Copy,
+  Gauge,
   Maximize2,
   Mic,
   MicOff,
@@ -20,7 +21,15 @@ import {
 } from 'lucide-react'
 import type { CallParticipant, MediaState, Profile, ScreenRelayFrame, VoiceRoom } from '../types'
 import type { AudioInputOption } from '../hooks/useCall'
-import type { ScreenShareQuality } from '../lib/screenShare'
+import {
+  DEFAULT_SCREEN_SHARE_SETTINGS,
+  SCREEN_SHARE_FRAME_RATE_OPTIONS,
+  SCREEN_SHARE_RESOLUTION_OPTIONS,
+  screenShareProfile,
+  screenShareSenderBitrate,
+  type ScreenShareQuality,
+  type ScreenShareSettings,
+} from '../lib/screenShare'
 import { EmptyCallTile, IconButton, MediaPreview, ParticipantTile } from './ui'
 
 function MicrophoneSelect({
@@ -163,10 +172,13 @@ export function CallDock({
   microphoneSwitching,
   cameraSwitching,
   screenShareStarting,
+  screenShareViewerCount,
+  activeScreenShareSettings,
   onToggleMicrophone,
   onSelectMicrophone,
   onToggleCamera,
-  onToggleScreen,
+  onStartScreenShare,
+  onStopScreenShare,
   onLeave,
 }: {
   microphoneOn: boolean
@@ -177,12 +189,68 @@ export function CallDock({
   microphoneSwitching: boolean
   cameraSwitching: boolean
   screenShareStarting: boolean
+  screenShareViewerCount: number
+  activeScreenShareSettings: ScreenShareSettings
   onToggleMicrophone: () => void
   onSelectMicrophone: (deviceId: string) => void
   onToggleCamera: () => void
-  onToggleScreen: () => void
+  onStartScreenShare: (settings: ScreenShareSettings) => void
+  onStopScreenShare: () => void
   onLeave: () => void
 }) {
+  const [screenSettingsOpen, setScreenSettingsOpen] = useState(false)
+  const [screenSettings, setScreenSettings] = useState<ScreenShareSettings>(
+    activeScreenShareSettings || DEFAULT_SCREEN_SHARE_SETTINGS,
+  )
+  const screenControlRef = useRef<HTMLDivElement>(null)
+  const screenSettingsPanelRef = useRef<HTMLDivElement>(null)
+  const profile = screenShareProfile(screenSettings)
+  const effectiveViewers = Math.max(1, screenShareViewerCount)
+  const senderMbps = screenShareSenderBitrate(screenSettings, effectiveViewers) / 1_000_000
+  const totalMbps = senderMbps * screenShareViewerCount
+  const demandingProfile = screenSettings.resolution === 1080 && screenSettings.frameRate === 60
+
+  useEffect(() => {
+    if (!screenSettingsOpen) return
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!screenControlRef.current?.contains(event.target as Node)) setScreenSettingsOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setScreenSettingsOpen(false)
+      screenControlRef.current?.querySelector<HTMLButtonElement>('.icon-button')?.focus()
+    }
+    window.addEventListener('pointerdown', closeOnPointerDown, true)
+    window.addEventListener('keydown', closeOnEscape)
+    const focusTimer = window.setTimeout(
+      () => screenSettingsPanelRef.current?.querySelector<HTMLInputElement>('input:checked')?.focus(),
+      0,
+    )
+    return () => {
+      window.clearTimeout(focusTimer)
+      window.removeEventListener('pointerdown', closeOnPointerDown, true)
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [screenSettingsOpen])
+
+  useEffect(() => {
+    if (sharingScreen) setScreenSettings(activeScreenShareSettings)
+  }, [activeScreenShareSettings, sharingScreen])
+
+  const handleScreenButton = () => {
+    if (sharingScreen) {
+      setScreenSettingsOpen(false)
+      onStopScreenShare()
+      return
+    }
+    setScreenSettingsOpen((open) => !open)
+  }
+
+  const beginScreenShare = () => {
+    setScreenSettingsOpen(false)
+    onStartScreenShare(screenSettings)
+  }
+
   return (
     <div className="call-dock" aria-label="Controles da chamada">
       <div className="call-dock__microphone">
@@ -209,14 +277,94 @@ export function CallDock({
         onClick={onToggleCamera}
       />
       <span className="call-dock__divider" />
-      <IconButton
-        icon={sharingScreen ? ScreenShareOff : MonitorUp}
-        label={sharingScreen ? 'Parar transmissão' : 'Compartilhar tela'}
-        active={sharingScreen}
-        tone={sharingScreen ? 'coral' : 'default'}
-        disabled={screenShareStarting}
-        onClick={onToggleScreen}
-      />
+      <div className="call-dock__screen" ref={screenControlRef}>
+        <IconButton
+          icon={sharingScreen ? ScreenShareOff : MonitorUp}
+          label={sharingScreen ? 'Parar transmissão' : 'Escolher qualidade e compartilhar tela'}
+          active={sharingScreen || screenSettingsOpen}
+          tone={sharingScreen ? 'coral' : 'default'}
+          disabled={screenShareStarting}
+          aria-haspopup={sharingScreen ? undefined : 'dialog'}
+          aria-expanded={sharingScreen ? undefined : screenSettingsOpen}
+          aria-controls={sharingScreen ? undefined : 'screen-share-settings'}
+          onClick={handleScreenButton}
+        />
+        {screenSettingsOpen && !sharingScreen && (
+          <div
+            id="screen-share-settings"
+            ref={screenSettingsPanelRef}
+            className="screen-share-settings"
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby="screen-share-settings-title"
+          >
+            <header className="screen-share-settings__header">
+              <span className="screen-share-settings__icon"><MonitorUp size={18} /></span>
+              <span>
+                <strong id="screen-share-settings-title">Qualidade da transmissão</strong>
+                <small>Escolha conforme sua internet e o conteúdo.</small>
+              </span>
+              <button type="button" onClick={() => setScreenSettingsOpen(false)} aria-label="Fechar opções de transmissão"><X size={17} /></button>
+            </header>
+
+            <fieldset className="screen-share-settings__group">
+              <legend>Resolução</legend>
+              <div className="screen-share-settings__choices screen-share-settings__choices--resolution">
+                {SCREEN_SHARE_RESOLUTION_OPTIONS.map((option) => (
+                  <label key={option.resolution} className={screenSettings.resolution === option.resolution ? 'is-selected' : ''}>
+                    <input
+                      type="radio"
+                      name="screen-resolution"
+                      value={option.resolution}
+                      checked={screenSettings.resolution === option.resolution}
+                      onChange={() => setScreenSettings((current) => ({ ...current, resolution: option.resolution }))}
+                    />
+                    <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="screen-share-settings__group">
+              <legend>Taxa de quadros</legend>
+              <div className="screen-share-settings__choices screen-share-settings__choices--fps">
+                {SCREEN_SHARE_FRAME_RATE_OPTIONS.map((frameRate) => (
+                  <label key={frameRate} className={screenSettings.frameRate === frameRate ? 'is-selected' : ''}>
+                    <input
+                      type="radio"
+                      name="screen-frame-rate"
+                      value={frameRate}
+                      checked={screenSettings.frameRate === frameRate}
+                      onChange={() => setScreenSettings((current) => ({ ...current, frameRate }))}
+                    />
+                    <span><strong>{frameRate} fps</strong><small>{frameRate === 15 ? 'Leve' : frameRate === 30 ? 'Equilibrado' : 'Movimento'}</small></span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <div className={`screen-share-settings__estimate ${demandingProfile ? 'is-warning' : ''}`}>
+              <Gauge size={17} />
+              <span>
+                <strong>{profile.width}×{profile.height} · até {profile.frameRate} fps</strong>
+                <small>
+                  Cerca de {senderMbps.toFixed(1).replace('.', ',')} Mb/s por pessoa
+                  {screenShareViewerCount > 1 ? ` · ${totalMbps.toFixed(1).replace('.', ',')} Mb/s de upload agora` : ''}
+                </small>
+              </span>
+            </div>
+
+            {demandingProfile && (
+              <p className="screen-share-settings__warning">1080p a 60 fps exige conexão e computador fortes. Se travar, use 720p a 30 fps.</p>
+            )}
+
+            <button type="button" className="screen-share-settings__start" onClick={beginScreenShare}>
+              <MonitorUp size={17} /> Abrir seletor de tela
+            </button>
+            <p className="screen-share-settings__note">O navegador ainda pedirá qual aba, janela ou tela você permite compartilhar.</p>
+          </div>
+        )}
+      </div>
       <IconButton icon={PhoneOff} label="Sair da chamada" tone="danger" onClick={onLeave} />
     </div>
   )
@@ -237,6 +385,7 @@ export function CallStage({
   localProfile,
   localMedia,
   screenShareQuality,
+  activeScreenShareSettings,
   screenAudioOn,
   screenAudioSystemWide,
   screenAudioProtected,
@@ -262,6 +411,7 @@ export function CallStage({
   localProfile: Profile
   localMedia: MediaState
   screenShareQuality: ScreenShareQuality | null
+  activeScreenShareSettings: ScreenShareSettings
   screenAudioOn: boolean
   screenAudioSystemWide: boolean
   screenAudioProtected: boolean
@@ -294,6 +444,7 @@ export function CallStage({
   const sortedParticipants = spotlightId
     ? [...participantList].sort((a, b) => Number(b.id === spotlightId) - Number(a.id === spotlightId))
     : participantList
+  const selectedScreenProfile = screenShareProfile(activeScreenShareSettings)
 
   return (
     <section className="call-stage">
@@ -319,9 +470,12 @@ export function CallStage({
           <span className="sharing-banner__quality">
             {screenShareQuality?.width && screenShareQuality?.height
               ? `${screenShareQuality.width}×${screenShareQuality.height}`
-              : 'Full HD'}
+              : `${selectedScreenProfile.width}×${selectedScreenProfile.height}`}
             {' · '}
-            {screenShareQuality?.frameRate ? `${Math.round(screenShareQuality.frameRate)} fps` : '60 fps'}
+            alvo de até {selectedScreenProfile.frameRate} fps
+            {screenShareQuality?.frameRate
+              ? ` · captura ${Math.round(screenShareQuality.frameRate)} fps`
+              : ''}
           </span>
           <span className={`sharing-banner__audio ${screenAudioOn ? 'is-on' : 'is-off'}`}>
             {screenAudioOn ? <Volume2 size={15} /> : <VolumeX size={15} />}

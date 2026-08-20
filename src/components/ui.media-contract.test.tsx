@@ -78,7 +78,7 @@ describe('ParticipantTile media playback contract', () => {
     )
 
     expect(markup).toContain('participant-tile__relay-frame')
-    expect(markup).toContain('Compatível · 10 fps')
+    expect(markup).toContain('Compatível · 12 fps')
     expect(markup).not.toContain('Conectando à transmissão…')
   })
 

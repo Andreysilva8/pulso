@@ -1,9 +1,19 @@
-import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type FocusEvent as ReactFocusEvent,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import type { LucideIcon } from 'lucide-react'
 import { LoaderCircle, MicOff, MonitorUp, Radio, Volume2, VolumeX, WifiOff } from 'lucide-react'
 import type { CallParticipant, Profile, ScreenRelayFrame } from '../types'
 import { SCREEN_RELAY_FRAME_RATE } from '../lib/screenRelay'
+
+const VOLUME_CONTROLS_IDLE_MS = 2_500
 
 export function Avatar({
   profile,
@@ -132,6 +142,7 @@ function useMediaElement<Element extends HTMLMediaElement>(
       if (element.srcObject) play()
     }
     const handleTrackReady = () => {
+      setStalled(false)
       play()
       updateReadyState()
     }
@@ -140,6 +151,7 @@ function useMediaElement<Element extends HTMLMediaElement>(
     const watchTracks = () => {
       for (const track of tracked) {
         track.removeEventListener('unmute', handleTrackReady)
+        track.removeEventListener('mute', handleVideoMuted)
         track.removeEventListener('ended', attachTracks)
       }
       tracked.clear()
@@ -170,25 +182,14 @@ function useMediaElement<Element extends HTMLMediaElement>(
     attachTracks()
 
     let frameRequest = 0
-    let stallTimer = 0
     if (kind === 'video') {
       const video = element as unknown as HTMLVideoElement
-      let lastFrameAt = performance.now()
       if (video.requestVideoFrameCallback) {
         const handleFrame: VideoFrameRequestCallback = () => {
-          lastFrameAt = performance.now()
           setStalled(false)
           frameRequest = video.requestVideoFrameCallback(handleFrame)
         }
         frameRequest = video.requestVideoFrameCallback(handleFrame)
-        stallTimer = window.setInterval(() => {
-          const hasLiveVideo = Boolean(video.srcObject
-            && stream?.getVideoTracks().some((track) => track.readyState === 'live' && !track.muted))
-          if (hasLiveVideo && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-            && performance.now() - lastFrameAt > 2_800) {
-            setStalled(true)
-          }
-        }, 750)
       }
     }
 
@@ -206,7 +207,6 @@ function useMediaElement<Element extends HTMLMediaElement>(
         track.removeEventListener('ended', attachTracks)
       }
       if (frameRequest) (element as unknown as HTMLVideoElement).cancelVideoFrameCallback(frameRequest)
-      if (stallTimer) window.clearInterval(stallTimer)
       element.pause()
       element.srcObject = null
     }
@@ -319,15 +319,20 @@ export function ParticipantTile({
   const [voiceVolume, setVoiceVolume] = useState(1)
   const [screenVolume, setScreenVolume] = useState(1)
   const [volumeOpen, setVolumeOpen] = useState(false)
+  const [volumeControlsVisible, setVolumeControlsVisible] = useState(true)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const participantTileRef = useRef<HTMLElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const previousVolumesRef = useRef({ voice: 1, screen: 1 })
-  const visibleVideo = expectsVideo && video.ready && !video.stalled
+  const volumeControlsIdleTimerRef = useRef<number | null>(null)
+  const volumeControlsLastActivityRef = useRef(0)
+  const connectionFailed = connectionState === 'failed'
+  const connectionInterrupted = connectionState === 'disconnected'
+  const directVideoUnavailable = video.stalled || connectionFailed || connectionInterrupted
+  const visibleVideo = expectsVideo && video.ready && !directVideoUnavailable
   const visibleFallback = Boolean(participant.media.screen && !visibleVideo && fallbackFrame)
   const visibleMedia = visibleVideo || visibleFallback
   const speaking = useSpeaking(resolvedVoiceStream, participant.media.microphone)
-  const connectionFailed = connectionState === 'failed'
-  const connectionInterrupted = connectionState === 'disconnected'
   const playbackBlocked = video.playbackBlocked || voiceAudio.playbackBlocked
     || screenAudio.playbackBlocked || relayAudioBlocked
   const pendingTitle = connectionFailed
@@ -343,9 +348,76 @@ export function ParticipantTile({
   const relayRequestedRef = useRef(false)
   const hasVoiceVolume = !local && participant.media.microphone
   const hasScreenVolume = !local && participant.media.screenAudio
+  const hasVolumeControls = hasVoiceVolume || hasScreenVolume
+  const volumeControlsPinned = volumeOpen || contextMenu !== null
   const participantMuted = (hasVoiceVolume || hasScreenVolume)
     && (!hasVoiceVolume || voiceVolume === 0)
     && (!hasScreenVolume || screenVolume === 0)
+
+  const clearVolumeControlsIdleTimer = useCallback(() => {
+    if (volumeControlsIdleTimerRef.current === null) return
+    window.clearTimeout(volumeControlsIdleTimerRef.current)
+    volumeControlsIdleTimerRef.current = null
+  }, [])
+
+  const scheduleVolumeControlsIdleCheck = useCallback(() => {
+    if (!hasVolumeControls || volumeControlsPinned || volumeControlsIdleTimerRef.current !== null) return
+
+    const checkIdle = () => {
+      volumeControlsIdleTimerRef.current = null
+      if (volumeControlsPinned) return
+
+      const focusedElement = document.activeElement as HTMLElement | null
+      const keyboardFocusInside = Boolean(
+        focusedElement
+          && participantTileRef.current?.contains(focusedElement)
+          && focusedElement.matches?.(':focus-visible'),
+      )
+      if (keyboardFocusInside) {
+        volumeControlsIdleTimerRef.current = window.setTimeout(checkIdle, VOLUME_CONTROLS_IDLE_MS)
+        return
+      }
+
+      const remaining = VOLUME_CONTROLS_IDLE_MS - (Date.now() - volumeControlsLastActivityRef.current)
+      if (remaining > 0) {
+        volumeControlsIdleTimerRef.current = window.setTimeout(checkIdle, remaining)
+        return
+      }
+      setVolumeControlsVisible(false)
+    }
+
+    const remaining = VOLUME_CONTROLS_IDLE_MS - (Date.now() - volumeControlsLastActivityRef.current)
+    volumeControlsIdleTimerRef.current = window.setTimeout(checkIdle, Math.max(0, remaining))
+  }, [hasVolumeControls, volumeControlsPinned])
+
+  const revealVolumeControls = useCallback(() => {
+    if (!hasVolumeControls) return
+    volumeControlsLastActivityRef.current = Date.now()
+    setVolumeControlsVisible(true)
+    scheduleVolumeControlsIdleCheck()
+  }, [hasVolumeControls, scheduleVolumeControlsIdleCheck])
+
+  const handleTileBlur = useCallback((event: ReactFocusEvent<HTMLElement>) => {
+    const nextTarget = event.relatedTarget as Node | null
+    if (nextTarget && event.currentTarget.contains(nextTarget)) return
+    volumeControlsLastActivityRef.current = Date.now()
+    scheduleVolumeControlsIdleCheck()
+  }, [scheduleVolumeControlsIdleCheck])
+
+  useEffect(() => {
+    clearVolumeControlsIdleTimer()
+    if (!hasVolumeControls) return
+
+    volumeControlsLastActivityRef.current = Date.now()
+    setVolumeControlsVisible(true)
+    if (!volumeControlsPinned) scheduleVolumeControlsIdleCheck()
+    return clearVolumeControlsIdleTimer
+  }, [
+    clearVolumeControlsIdleTimer,
+    hasVolumeControls,
+    scheduleVolumeControlsIdleCheck,
+    volumeControlsPinned,
+  ])
 
   useEffect(() => {
     if (local || !participant.media.screen || visibleVideo || !onRequestRelay) {
@@ -362,7 +434,7 @@ export function ParticipantTile({
       relayRequestedRef.current = true
       retryTimer = window.setTimeout(requestRelay, 5_000)
     }
-    const initialTimer = window.setTimeout(requestRelay, 1_800)
+    const initialTimer = window.setTimeout(requestRelay, 4_000)
     return () => {
       window.clearTimeout(initialTimer)
       window.clearTimeout(retryTimer)
@@ -444,6 +516,7 @@ export function ParticipantTile({
     if (local || (!hasVoiceVolume && !hasScreenVolume)) return
     event.preventDefault()
     event.stopPropagation()
+    revealVolumeControls()
     setVolumeOpen(false)
     const menuWidth = 264
     const menuHeight = hasVoiceVolume && hasScreenVolume ? 278 : 222
@@ -455,11 +528,16 @@ export function ParticipantTile({
 
   return (
     <article
+      ref={participantTileRef}
       className={`participant-tile ${speaking ? 'is-speaking' : ''} ${spotlight ? 'is-spotlight' : ''} ${participant.media.screen ? 'is-screen' : ''} ${participantMuted ? 'is-locally-muted' : ''}`}
       aria-label={`${participant.name}${local ? ', você' : ', clique com o botão direito para controlar o áudio'}`}
       title={local ? undefined : 'Clique com o botão direito para mutar ou ajustar o volume'}
       onDoubleClick={onSpotlight}
       onContextMenu={openContextMenu}
+      onPointerMove={revealVolumeControls}
+      onTouchStart={revealVolumeControls}
+      onFocusCapture={revealVolumeControls}
+      onBlurCapture={handleTileBlur}
     >
       {stream && (
         <video
@@ -524,9 +602,9 @@ export function ParticipantTile({
           {video.playbackBlocked ? 'Exibir transmissão' : 'Ativar som'}
         </button>
       )}
-      {(hasVoiceVolume || hasScreenVolume) && (
+      {hasVolumeControls && (
         <div
-          className={`participant-volume ${volumeOpen ? 'is-open' : ''}`}
+          className={`participant-volume ${volumeOpen ? 'is-open' : ''} ${volumeControlsVisible ? '' : 'is-idle'}`}
           onClick={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
         >

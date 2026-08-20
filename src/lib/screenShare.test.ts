@@ -7,6 +7,7 @@ import {
   SCREEN_SHARE_VIDEO_CONSTRAINTS,
   SCREEN_SHARE_WIDTH,
   configureScreenSender,
+  selectSafeScreenAudio,
 } from './screenShare'
 
 describe('screen-share quality profile', () => {
@@ -29,9 +30,55 @@ describe('screen-share quality profile', () => {
     expect(SCREEN_SHARE_DISPLAY_OPTIONS).toMatchObject({
       selfBrowserSurface: 'exclude',
       windowAudio: 'window',
-      systemAudio: 'include',
+      systemAudio: 'exclude',
       preferCurrentTab: false,
+      audio: {
+        restrictOwnAudio: { ideal: true },
+      },
     })
+  })
+
+  it('removes system-wide audio before it can create a feedback loop', () => {
+    const audioTrack = {
+      readyState: 'live',
+      stop: vi.fn(),
+      contentHint: '',
+    } as unknown as MediaStreamTrack
+    const removeTrack = vi.fn()
+    const stream = {
+      getVideoTracks: () => [{ getSettings: () => ({ displaySurface: 'monitor' }) }],
+      getAudioTracks: () => [audioTrack],
+      removeTrack,
+    } as unknown as MediaStream
+
+    expect(selectSafeScreenAudio(stream)).toMatchObject({
+      track: null,
+      blockedSystemAudio: true,
+      displaySurface: 'monitor',
+    })
+    expect(audioTrack.stop).toHaveBeenCalledOnce()
+    expect(removeTrack).toHaveBeenCalledWith(audioTrack)
+  })
+
+  it('keeps isolated window audio available to the call', () => {
+    const audioTrack = {
+      readyState: 'live',
+      stop: vi.fn(),
+      contentHint: '',
+    } as unknown as MediaStreamTrack
+    const stream = {
+      getVideoTracks: () => [{ getSettings: () => ({ displaySurface: 'window' }) }],
+      getAudioTracks: () => [audioTrack],
+      removeTrack: vi.fn(),
+    } as unknown as MediaStream
+
+    expect(selectSafeScreenAudio(stream)).toMatchObject({
+      track: audioTrack,
+      blockedSystemAudio: false,
+      displaySurface: 'window',
+    })
+    expect(audioTrack.stop).not.toHaveBeenCalled()
+    expect(audioTrack.contentHint).toBe('music')
   })
 
   it('prioritizes smooth motion when configuring the WebRTC sender', async () => {

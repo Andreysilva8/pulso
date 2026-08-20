@@ -9,6 +9,7 @@ import {
   SCREEN_SHARE_DISPLAY_OPTIONS,
   configureScreenSender,
   configureScreenTrack,
+  selectSafeScreenAudio,
   type ScreenShareQuality,
 } from '../lib/screenShare'
 import {
@@ -127,6 +128,7 @@ export function useCall({
   const [cameraOn, setCameraOn] = useState(true)
   const [sharingScreen, setSharingScreen] = useState(false)
   const [screenAudioOn, setScreenAudioOn] = useState(false)
+  const [screenAudioProtected, setScreenAudioProtected] = useState(false)
   const [screenShareQuality, setScreenShareQuality] = useState<ScreenShareQuality | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [audioInputDevices, setAudioInputDevices] = useState<AudioInputOption[]>([])
@@ -868,6 +870,7 @@ export function useCall({
     setScreenStream(null)
     setSharingScreen(false)
     setScreenAudioOn(false)
+    setScreenAudioProtected(false)
     setScreenShareQuality(null)
     for (const track of stream?.getTracks() || []) {
       track.onended = null
@@ -917,6 +920,7 @@ export function useCall({
     setRelayAudioBlocked(new Map())
     setSharingScreen(false)
     setScreenAudioOn(false)
+    setScreenAudioProtected(false)
     setMediaPreparing(false)
     setMicrophoneSwitching(false)
     setScreenShareStarting(false)
@@ -1026,8 +1030,8 @@ export function useCall({
         for (const track of capturedStream.getTracks()) track.stop()
         throw new Error('A captura não forneceu vídeo.')
       }
-      const screenAudioTrack = capturedStream.getAudioTracks().find((track) => track.readyState === 'live') || null
-      if (screenAudioTrack && 'contentHint' in screenAudioTrack) screenAudioTrack.contentHint = 'music'
+      const screenAudioSafety = selectSafeScreenAudio(capturedStream)
+      const screenAudioTrack = screenAudioSafety.track
 
       const quality = await configureScreenTrack(screenTrack)
       if (requestEpoch !== mediaEpochRef.current || statusRef.current !== 'joined') {
@@ -1043,6 +1047,7 @@ export function useCall({
       setScreenStream(capturedStream)
       setSharingScreen(true)
       setScreenAudioOn(Boolean(screenAudioTrack))
+      setScreenAudioProtected(screenAudioSafety.blockedSystemAudio)
       setScreenShareQuality(quality)
       screenTrack.onended = () => { void stopScreenShare() }
       if (screenAudioTrack) {
@@ -1119,6 +1124,7 @@ export function useCall({
     cameraOn,
     sharingScreen,
     screenAudioOn,
+    screenAudioProtected,
     screenShareQuality,
     mediaError,
     audioInputDevices,

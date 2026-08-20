@@ -233,6 +233,7 @@ export function CallStage({
   localMedia,
   screenShareQuality,
   screenAudioOn,
+  screenAudioProtected,
   onResumeRelayAudio,
   onScreenVolumeChange,
   onRequestScreenRelay,
@@ -256,6 +257,7 @@ export function CallStage({
   localMedia: MediaState
   screenShareQuality: ScreenShareQuality | null
   screenAudioOn: boolean
+  screenAudioProtected: boolean
   onResumeRelayAudio: (peerId: string) => void
   onScreenVolumeChange: (peerId: string, volume: number) => void
   onRequestScreenRelay: (peerId: string) => void
@@ -316,7 +318,11 @@ export function CallStage({
           </span>
           <span className={`sharing-banner__audio ${screenAudioOn ? 'is-on' : 'is-off'}`}>
             {screenAudioOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
-            {screenAudioOn ? 'Áudio da janela incluído · use fones se compartilhar a tela inteira' : 'Sem áudio — marque “Compartilhar áudio” no seletor do navegador'}
+            {screenAudioOn
+              ? 'Áudio isolado da aba ou janela incluído'
+              : screenAudioProtected
+                ? 'Proteção antieco ativa · compartilhe uma aba ou janela para transmitir o áudio'
+                : 'Sem áudio — marque “Compartilhar áudio” no seletor do navegador'}
           </span>
           <span className="sharing-banner__compatibility">Se a conexão direta falhar, uma cópia reduzida passa pelo servidor.</span>
         </div>

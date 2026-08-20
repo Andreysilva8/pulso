@@ -313,6 +313,7 @@ export default function App() {
               localMedia={localMedia}
               screenShareQuality={call.screenShareQuality}
               screenAudioOn={call.screenAudioOn}
+              screenAudioProtected={call.screenAudioProtected}
               onResumeRelayAudio={(peerId) => void call.resumeRelayAudio(peerId)}
               onScreenVolumeChange={call.setRelayScreenVolume}
               onRequestScreenRelay={realtime.requestScreenRelay}

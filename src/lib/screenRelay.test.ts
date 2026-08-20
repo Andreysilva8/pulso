@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { base64ToPcm16, downsampleToPcm16, pcm16ToBase64 } from './screenRelay'
+import {
+  SCREEN_RELAY_FRAME_RATE,
+  SCREEN_RELAY_MAX_DATA_URL_LENGTH,
+  base64ToPcm16,
+  downsampleToPcm16,
+  pcm16ToBase64,
+} from './screenRelay'
 
 describe('screen relay audio', () => {
+  it('keeps compatibility video responsive and within the server budget', () => {
+    expect(SCREEN_RELAY_FRAME_RATE).toBe(10)
+    expect(SCREEN_RELAY_MAX_DATA_URL_LENGTH).toBeLessThanOrEqual(50_000)
+  })
+
   it('downsamples and mixes stereo audio into 16 kHz mono PCM', () => {
     const left = new Float32Array(480).fill(0.5)
     const right = new Float32Array(480).fill(-0.25)

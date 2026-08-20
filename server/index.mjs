@@ -14,7 +14,7 @@ const portArg = process.argv.find((value) => value.startsWith('--port='))
 const port = Number(portArg?.split('=')[1] || process.env.PORT || 4173)
 const host = process.env.HOST || '127.0.0.1'
 const maxClients = Number(process.env.MAX_CLIENTS || 100)
-const MAX_RELAY_FRAME_LENGTH = 90_000
+const MAX_RELAY_FRAME_LENGTH = 52_000
 const MAX_RELAY_BYTES_PER_WINDOW = 6 * 1024 * 1024
 const MAX_MEDIA_BUFFERED_AMOUNT = 512 * 1024
 const MAX_CONTROL_BUFFERED_AMOUNT = 2 * 1024 * 1024
@@ -418,7 +418,7 @@ function handleMessage(client, rawData) {
       if (!targets.size) return
       const dataUrl = typeof message.dataUrl === 'string' ? message.dataUrl : ''
       if (dataUrl.length > MAX_RELAY_FRAME_LENGTH || !/^data:image\/(?:webp|jpeg);base64,[a-z0-9+/=]+$/i.test(dataUrl)) return
-      if (messageWindowNow - client.lastScreenFrameAt < 160) return
+      if (messageWindowNow - client.lastScreenFrameAt < 80) return
       if (!consumeRelayBudget(client, dataUrl.length, messageWindowNow)) return
       client.lastScreenFrameAt = messageWindowNow
       broadcast(

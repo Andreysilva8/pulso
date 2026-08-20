@@ -65,6 +65,7 @@ describe('ParticipantTile media playback contract', () => {
     expect(markup).toContain(`Ajustar volume de ${participant.name}`)
     expect(markup).toContain(`Volume da voz de ${participant.name}`)
     expect(markup).toContain(`Volume da transmissão de ${participant.name}`)
+    expect(markup).toContain('Clique com o botão direito para mutar ou ajustar o volume')
   })
 
   it('renders the relayed frame instead of the connecting placeholder', () => {
@@ -77,7 +78,7 @@ describe('ParticipantTile media playback contract', () => {
     )
 
     expect(markup).toContain('participant-tile__relay-frame')
-    expect(markup).toContain('Modo compatível')
+    expect(markup).toContain('Compatível · 10 fps')
     expect(markup).not.toContain('Conectando à transmissão…')
   })
 

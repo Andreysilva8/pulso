@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { LucideIcon } from 'lucide-react'
 import { LoaderCircle, MicOff, MonitorUp, Radio, Volume2, VolumeX, WifiOff } from 'lucide-react'
 import type { CallParticipant, Profile, ScreenRelayFrame } from '../types'
+import { SCREEN_RELAY_FRAME_RATE } from '../lib/screenRelay'
 
 export function Avatar({
   profile,
@@ -73,6 +75,7 @@ function useMediaElement<Element extends HTMLMediaElement>(
 ) {
   const ref = useRef<Element>(null)
   const [ready, setReady] = useState(false)
+  const [stalled, setStalled] = useState(false)
   const [playbackBlocked, setPlaybackBlocked] = useState(false)
 
   const retry = useCallback(async () => {
@@ -95,6 +98,7 @@ function useMediaElement<Element extends HTMLMediaElement>(
     element.muted = muted
     element.defaultMuted = muted
     setReady(false)
+    setStalled(false)
     setPlaybackBlocked(false)
 
     const updateReadyState = () => {
@@ -142,8 +146,13 @@ function useMediaElement<Element extends HTMLMediaElement>(
       for (const track of tracks()) {
         tracked.add(track)
         track.addEventListener('unmute', handleTrackReady)
+        if (kind === 'video') track.addEventListener('mute', handleVideoMuted)
         track.addEventListener('ended', attachTracks)
       }
+    }
+
+    function handleVideoMuted() {
+      setStalled(true)
     }
     const handleTrackChange = () => {
       watchTracks()
@@ -160,6 +169,29 @@ function useMediaElement<Element extends HTMLMediaElement>(
     watchTracks()
     attachTracks()
 
+    let frameRequest = 0
+    let stallTimer = 0
+    if (kind === 'video') {
+      const video = element as unknown as HTMLVideoElement
+      let lastFrameAt = performance.now()
+      if (video.requestVideoFrameCallback) {
+        const handleFrame: VideoFrameRequestCallback = () => {
+          lastFrameAt = performance.now()
+          setStalled(false)
+          frameRequest = video.requestVideoFrameCallback(handleFrame)
+        }
+        frameRequest = video.requestVideoFrameCallback(handleFrame)
+        stallTimer = window.setInterval(() => {
+          const hasLiveVideo = Boolean(video.srcObject
+            && stream?.getVideoTracks().some((track) => track.readyState === 'live' && !track.muted))
+          if (hasLiveVideo && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+            && performance.now() - lastFrameAt > 2_800) {
+            setStalled(true)
+          }
+        }, 750)
+      }
+    }
+
     return () => {
       element.removeEventListener('loadeddata', updateReadyState)
       element.removeEventListener('canplay', updateReadyState)
@@ -170,14 +202,17 @@ function useMediaElement<Element extends HTMLMediaElement>(
       stream?.removeEventListener('removetrack', handleTrackChange)
       for (const track of tracked) {
         track.removeEventListener('unmute', handleTrackReady)
+        track.removeEventListener('mute', handleVideoMuted)
         track.removeEventListener('ended', attachTracks)
       }
+      if (frameRequest) (element as unknown as HTMLVideoElement).cancelVideoFrameCallback(frameRequest)
+      if (stallTimer) window.clearInterval(stallTimer)
       element.pause()
       element.srcObject = null
     }
   }, [kind, muted, stream])
 
-  return { ref, ready, playbackBlocked, retry }
+  return { ref, ready, stalled, playbackBlocked, retry }
 }
 
 function useSpeaking(stream: MediaStream | null, enabled: boolean) {
@@ -284,7 +319,10 @@ export function ParticipantTile({
   const [voiceVolume, setVoiceVolume] = useState(1)
   const [screenVolume, setScreenVolume] = useState(1)
   const [volumeOpen, setVolumeOpen] = useState(false)
-  const visibleVideo = expectsVideo && video.ready
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+  const previousVolumesRef = useRef({ voice: 1, screen: 1 })
+  const visibleVideo = expectsVideo && video.ready && !video.stalled
   const visibleFallback = Boolean(participant.media.screen && !visibleVideo && fallbackFrame)
   const visibleMedia = visibleVideo || visibleFallback
   const speaking = useSpeaking(resolvedVoiceStream, participant.media.microphone)
@@ -297,12 +335,17 @@ export function ParticipantTile({
     : connectionInterrupted
       ? 'Reconectando à transmissão…'
       : participant.media.screen
-        ? 'Conectando à transmissão…'
+        ? video.stalled ? 'Recuperando transmissão…' : 'Conectando à transmissão…'
         : 'Conectando à câmera…'
   const pendingDetail = connectionFailed
     ? 'A rede não conseguiu receber a mídia. Tentaremos conectar novamente.'
     : 'A imagem aparecerá assim que o primeiro quadro chegar.'
   const relayRequestedRef = useRef(false)
+  const hasVoiceVolume = !local && participant.media.microphone
+  const hasScreenVolume = !local && participant.media.screenAudio
+  const participantMuted = (hasVoiceVolume || hasScreenVolume)
+    && (!hasVoiceVolume || voiceVolume === 0)
+    && (!hasScreenVolume || screenVolume === 0)
 
   useEffect(() => {
     if (local || !participant.media.screen || visibleVideo || !onRequestRelay) {
@@ -340,13 +383,29 @@ export function ParticipantTile({
   }, [local, onScreenVolumeChange, participant.id, screenAudio.ref, screenVolume])
 
   useEffect(() => {
-    if (!volumeOpen) return
+    if (!volumeOpen && !contextMenu) return
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setVolumeOpen(false)
+      if (event.key === 'Escape') {
+        setVolumeOpen(false)
+        setContextMenu(null)
+      }
     }
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) return
+      setContextMenu(null)
+    }
+    const closeContextMenu = () => setContextMenu(null)
     window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [volumeOpen])
+    window.addEventListener('pointerdown', closeOnPointerDown, true)
+    window.addEventListener('resize', closeContextMenu)
+    window.addEventListener('scroll', closeContextMenu, true)
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('pointerdown', closeOnPointerDown, true)
+      window.removeEventListener('resize', closeContextMenu)
+      window.removeEventListener('scroll', closeContextMenu, true)
+    }
+  }, [contextMenu, volumeOpen])
 
   const retryPlayback = () => {
     void video.retry()
@@ -355,14 +414,52 @@ export function ParticipantTile({
     onResumeRelayAudio?.()
   }
 
-  const hasVoiceVolume = !local && participant.media.microphone
-  const hasScreenVolume = !local && participant.media.screenAudio
   const audibleVolume = Math.max(hasVoiceVolume ? voiceVolume : 0, hasScreenVolume ? screenVolume : 0)
+
+  const changeVoiceVolume = (value: number) => {
+    const safeValue = Math.max(0, Math.min(1, value))
+    if (safeValue > 0) previousVolumesRef.current.voice = safeValue
+    setVoiceVolume(safeValue)
+  }
+
+  const changeScreenVolume = (value: number) => {
+    const safeValue = Math.max(0, Math.min(1, value))
+    if (safeValue > 0) previousVolumesRef.current.screen = safeValue
+    setScreenVolume(safeValue)
+  }
+
+  const toggleParticipantMute = () => {
+    if (participantMuted) {
+      if (hasVoiceVolume) setVoiceVolume(previousVolumesRef.current.voice || 1)
+      if (hasScreenVolume) setScreenVolume(previousVolumesRef.current.screen || 1)
+      return
+    }
+    if (hasVoiceVolume && voiceVolume > 0) previousVolumesRef.current.voice = voiceVolume
+    if (hasScreenVolume && screenVolume > 0) previousVolumesRef.current.screen = screenVolume
+    if (hasVoiceVolume) setVoiceVolume(0)
+    if (hasScreenVolume) setScreenVolume(0)
+  }
+
+  const openContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+    if (local || (!hasVoiceVolume && !hasScreenVolume)) return
+    event.preventDefault()
+    event.stopPropagation()
+    setVolumeOpen(false)
+    const menuWidth = 264
+    const menuHeight = hasVoiceVolume && hasScreenVolume ? 278 : 222
+    setContextMenu({
+      x: Math.max(10, Math.min(event.clientX, window.innerWidth - menuWidth - 10)),
+      y: Math.max(10, Math.min(event.clientY, window.innerHeight - menuHeight - 10)),
+    })
+  }
 
   return (
     <article
-      className={`participant-tile ${speaking ? 'is-speaking' : ''} ${spotlight ? 'is-spotlight' : ''} ${participant.media.screen ? 'is-screen' : ''}`}
+      className={`participant-tile ${speaking ? 'is-speaking' : ''} ${spotlight ? 'is-spotlight' : ''} ${participant.media.screen ? 'is-screen' : ''} ${participantMuted ? 'is-locally-muted' : ''}`}
+      aria-label={`${participant.name}${local ? ', você' : ', clique com o botão direito para controlar o áudio'}`}
+      title={local ? undefined : 'Clique com o botão direito para mutar ou ajustar o volume'}
       onDoubleClick={onSpotlight}
+      onContextMenu={openContextMenu}
     >
       {stream && (
         <video
@@ -406,7 +503,7 @@ export function ParticipantTile({
           <span className="media-chip media-chip--screen"><MonitorUp size={13} /> Transmitindo</span>
         )}
         {visibleFallback && (
-          <span className="media-chip media-chip--relay"><Radio size={13} /> Modo compatível</span>
+          <span className="media-chip media-chip--relay"><Radio size={13} /> Compatível · {SCREEN_RELAY_FRAME_RATE} fps</span>
         )}
         {participant.media.screen && (
           <span className={`media-chip ${participant.media.screenAudio ? 'media-chip--audio' : 'media-chip--muted-audio'}`}>
@@ -416,6 +513,9 @@ export function ParticipantTile({
         )}
         {(connectionFailed || connectionInterrupted) && (
           <span className="media-chip media-chip--danger"><WifiOff size={13} /> Instável</span>
+        )}
+        {participantMuted && (
+          <span className="media-chip media-chip--local-muted"><VolumeX size={13} /> Mudo para você</span>
         )}
       </div>
       {playbackBlocked && (
@@ -457,7 +557,7 @@ export function ParticipantTile({
                     max="100"
                     value={Math.round(voiceVolume * 100)}
                     aria-label={`Volume da voz de ${participant.name}`}
-                    onChange={(event) => setVoiceVolume(Number(event.target.value) / 100)}
+                    onChange={(event) => changeVoiceVolume(Number(event.target.value) / 100)}
                   />
                 </label>
               )}
@@ -470,7 +570,7 @@ export function ParticipantTile({
                     max="100"
                     value={Math.round(screenVolume * 100)}
                     aria-label={`Volume da transmissão de ${participant.name}`}
-                    onChange={(event) => setScreenVolume(Number(event.target.value) / 100)}
+                    onChange={(event) => changeScreenVolume(Number(event.target.value) / 100)}
                   />
                 </label>
               )}
@@ -481,6 +581,59 @@ export function ParticipantTile({
         <span className="participant-name">{participant.name}{local ? ' (você)' : ''}</span>
         {!participant.media.microphone && <span className="muted-chip" aria-label="Microfone desligado"><MicOff size={14} /></span>}
       </div>
+      {contextMenu && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={contextMenuRef}
+          className="participant-context-menu"
+          role="dialog"
+          aria-label={`Controles de áudio de ${participant.name}`}
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="participant-context-menu__header">
+            <Avatar profile={participant} size="small" />
+            <span><strong>{participant.name}</strong><small>Áudio somente para você</small></span>
+          </div>
+          <button
+            type="button"
+            className={`participant-context-menu__mute ${participantMuted ? 'is-muted' : ''}`}
+            onClick={toggleParticipantMute}
+          >
+            {participantMuted ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            <span><strong>{participantMuted ? 'Ouvir novamente' : 'Mutar esta pessoa'}</strong><small>Voz e transmissão</small></span>
+          </button>
+          <div className="participant-context-menu__levels">
+            {hasVoiceVolume && (
+              <label>
+                <span><strong>Voz</strong><output>{Math.round(voiceVolume * 100)}%</output></span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round(voiceVolume * 100)}
+                  aria-label={`Volume da voz de ${participant.name}`}
+                  onChange={(event) => changeVoiceVolume(Number(event.target.value) / 100)}
+                />
+              </label>
+            )}
+            {hasScreenVolume && (
+              <label className="is-screen">
+                <span><strong>Transmissão</strong><output>{Math.round(screenVolume * 100)}%</output></span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round(screenVolume * 100)}
+                  aria-label={`Volume da transmissão de ${participant.name}`}
+                  onChange={(event) => changeScreenVolume(Number(event.target.value) / 100)}
+                />
+              </label>
+            )}
+          </div>
+          <p>Use os controles separados para cortar apenas o retorno da tela sem perder a voz.</p>
+        </div>,
+        document.body,
+      )}
     </article>
   )
 }

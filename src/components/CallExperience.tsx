@@ -316,7 +316,7 @@ export function CallStage({
           </span>
           <span className={`sharing-banner__audio ${screenAudioOn ? 'is-on' : 'is-off'}`}>
             {screenAudioOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
-            {screenAudioOn ? 'Áudio da tela incluído' : 'Sem áudio — marque “Compartilhar áudio” no seletor do navegador'}
+            {screenAudioOn ? 'Áudio da janela incluído · use fones se compartilhar a tela inteira' : 'Sem áudio — marque “Compartilhar áudio” no seletor do navegador'}
           </span>
           <span className="sharing-banner__compatibility">Se a conexão direta falhar, uma cópia reduzida passa pelo servidor.</span>
         </div>
@@ -350,7 +350,7 @@ export function CallStage({
         })}
         {sortedParticipants.length === 1 && <EmptyCallTile />}
       </div>
-      <p className="stage-hint"><Camera size={14} /> Dê dois cliques em um participante para fixar no palco</p>
+      <p className="stage-hint"><Camera size={14} /> Dois cliques fixam no palco · clique direito abre mudo e volume</p>
     </section>
   )
 }

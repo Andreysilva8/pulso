@@ -52,11 +52,11 @@ Ela usa por padrão 1 OCPU, 6 GB de RAM e boot de 50 GB. A aplicação fica prot
 - presença online e perfil local editável;
 - salas de voz com múltiplos participantes em malha P2P;
 - áudio, vídeo, mute e câmera on/off;
-- compartilhamento de tela priorizando Full HD (1920×1080), 60 fps e até 12 Mbps no caminho WebRTC direto, com retorno automático para a câmera;
-- modo compatível de tela e áudio, ativado sob demanda para o espectador cuja rede bloqueou a conexão WebRTC direta;
-- áudio do computador/aba durante a transmissão, quando a superfície escolhida e o navegador oferecem a opção “Compartilhar áudio”;
+- compartilhamento de tela solicitando Full HD (1920×1080), 60 fps e até 12 Mbps no caminho WebRTC direto, priorizando fluidez quando a rede não sustenta resolução e taxa máximas ao mesmo tempo;
+- detecção de vídeo WebRTC congelado e modo compatível de tela/áudio a 10 fps, ativado sob demanda somente para o espectador afetado;
+- áudio do computador/aba durante a transmissão com isolamento da janela e exclusão da própria aba do Pulso quando o navegador oferece esses recursos;
 - seleção e troca de microfone durante a chamada, sem desconectar o participante;
-- controles independentes de volume por participante para voz e áudio da transmissão;
+- menu de clique direito por participante com mudo local e controles independentes para voz e áudio da transmissão;
 - chat separado dentro de cada chamada;
 - convites por URL (`?room=cafe`, por exemplo);
 - negociação WebRTC com offers simultâneas protegidas;

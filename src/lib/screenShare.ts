@@ -9,6 +9,20 @@ export const SCREEN_SHARE_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   frameRate: { ideal: SCREEN_SHARE_FRAME_RATE, max: SCREEN_SHARE_FRAME_RATE },
 }
 
+export const SCREEN_SHARE_DISPLAY_OPTIONS = {
+  video: SCREEN_SHARE_VIDEO_CONSTRAINTS,
+  audio: {
+    echoCancellation: { ideal: true },
+    noiseSuppression: { ideal: false },
+    autoGainControl: { ideal: false },
+  },
+  systemAudio: 'include',
+  windowAudio: 'window',
+  selfBrowserSurface: 'exclude',
+  surfaceSwitching: 'include',
+  preferCurrentTab: false,
+} as DisplayMediaStreamOptions
+
 export type ScreenShareQuality = {
   width?: number
   height?: number
@@ -41,8 +55,12 @@ export async function configureScreenSender(sender: RTCRtpSender) {
     encoding.maxBitrate = SCREEN_SHARE_MAX_BITRATE
     encoding.maxFramerate = SCREEN_SHARE_FRAME_RATE
     encoding.scaleResolutionDownBy = 1
+    encoding.priority = 'high'
+    encoding.networkPriority = 'high'
   }
-  parameters.degradationPreference = 'maintain-resolution'
+  // Preserve motion first. Under congestion the browser may soften the image,
+  // but it should avoid turning a 60 fps share into a frozen slideshow.
+  parameters.degradationPreference = 'maintain-framerate'
 
   try {
     await sender.setParameters(parameters)

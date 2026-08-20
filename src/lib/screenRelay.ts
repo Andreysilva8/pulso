@@ -1,7 +1,8 @@
-export const SCREEN_RELAY_FRAME_INTERVAL = 200
-export const SCREEN_RELAY_MAX_WIDTH = 960
-export const SCREEN_RELAY_MAX_HEIGHT = 540
-export const SCREEN_RELAY_MAX_DATA_URL_LENGTH = 90_000
+export const SCREEN_RELAY_FRAME_RATE = 10
+export const SCREEN_RELAY_FRAME_INTERVAL = 1_000 / SCREEN_RELAY_FRAME_RATE
+export const SCREEN_RELAY_MAX_WIDTH = 1280
+export const SCREEN_RELAY_MAX_HEIGHT = 720
+export const SCREEN_RELAY_MAX_DATA_URL_LENGTH = 50_000
 export const SCREEN_RELAY_AUDIO_SAMPLE_RATE = 16_000
 
 export type ScreenRelayController = {
@@ -57,7 +58,22 @@ export function base64ToPcm16(serialized: string) {
   return new Int16Array(bytes.buffer)
 }
 
-function captureFrame(video: HTMLVideoElement, canvas: HTMLCanvasElement) {
+function canvasToDataUrl(canvas: HTMLCanvasElement, quality: number) {
+  return new Promise<string | null>((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve(null)
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(blob)
+    }, 'image/webp', quality)
+  })
+}
+
+async function captureFrame(video: HTMLVideoElement, canvas: HTMLCanvasElement) {
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return null
   const scale = Math.min(
     1,
@@ -73,14 +89,15 @@ function captureFrame(video: HTMLVideoElement, canvas: HTMLCanvasElement) {
   context.drawImage(video, 0, 0, canvas.width, canvas.height)
 
   let workingCanvas = canvas
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const quality = Math.max(0.32, 0.68 - attempt * 0.08)
-    const dataUrl = workingCanvas.toDataURL('image/webp', quality)
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const quality = Math.max(0.28, 0.62 - attempt * 0.065)
+    const dataUrl = await canvasToDataUrl(workingCanvas, quality)
+    if (!dataUrl) return null
     if (dataUrl.length <= SCREEN_RELAY_MAX_DATA_URL_LENGTH) return dataUrl
 
     const reduced = document.createElement('canvas')
-    reduced.width = Math.max(2, Math.round(workingCanvas.width * 0.78))
-    reduced.height = Math.max(2, Math.round(workingCanvas.height * 0.78))
+    reduced.width = Math.max(2, Math.round(workingCanvas.width * 0.84))
+    reduced.height = Math.max(2, Math.round(workingCanvas.height * 0.84))
     reduced.getContext('2d', { alpha: false })?.drawImage(
       workingCanvas,
       0,
@@ -117,10 +134,11 @@ export async function startScreenRelay(
   let lastFrame = ''
   let lastFrameSentAt = 0
 
-  const emitFrame = () => {
+  const emitFrame = async () => {
     if (stopped) return
+    const startedAt = performance.now()
     try {
-      const dataUrl = captureFrame(video, canvas)
+      const dataUrl = await captureFrame(video, canvas)
       const now = Date.now()
       if (dataUrl && (dataUrl !== lastFrame || now - lastFrameSentAt >= 1_000)) {
         lastFrame = dataUrl
@@ -128,10 +146,11 @@ export async function startScreenRelay(
         handlers.sendFrame(dataUrl)
       }
     } finally {
-      frameTimer = window.setTimeout(emitFrame, SCREEN_RELAY_FRAME_INTERVAL)
+      const remaining = Math.max(0, SCREEN_RELAY_FRAME_INTERVAL - (performance.now() - startedAt))
+      frameTimer = window.setTimeout(() => { void emitFrame() }, remaining)
     }
   }
-  emitFrame()
+  void emitFrame()
 
   const audioTracks = stream.getAudioTracks().filter((track) => track.readyState === 'live')
   if (audioTracks.length && window.AudioContext) {

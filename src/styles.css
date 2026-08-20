@@ -1666,6 +1666,16 @@ button:disabled {
   background: rgba(31, 22, 7, 0.7);
 }
 
+.media-chip--local-muted {
+  color: #ffd7de;
+  border: 1px solid rgba(255, 96, 123, 0.26);
+  background: rgba(38, 9, 17, 0.78);
+}
+
+.participant-tile.is-locally-muted {
+  border-color: rgba(255, 96, 123, 0.3);
+}
+
 .participant-tile__playback-retry {
   position: absolute;
   z-index: 4;
@@ -1772,6 +1782,140 @@ button:disabled {
 
 .participant-volume__panel label.is-screen output {
   color: #ffb2a7;
+}
+
+.participant-context-menu {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  gap: 10px;
+  width: 264px;
+  padding: 10px;
+  color: var(--muted-strong);
+  border: 1px solid rgba(218, 235, 250, 0.16);
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(12, 26, 41, 0.985), rgba(5, 13, 23, 0.985)),
+    rgba(7, 16, 27, 0.98);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(59, 214, 198, 0.035) inset;
+  backdrop-filter: blur(22px);
+  animation: volumePanelIn 140ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.participant-context-menu__header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 3px 4px 8px;
+  border-bottom: 1px solid rgba(218, 235, 250, 0.09);
+}
+
+.participant-context-menu__header > span,
+.participant-context-menu__mute > span {
+  display: grid;
+  min-width: 0;
+}
+
+.participant-context-menu__header strong {
+  overflow: hidden;
+  color: #f4f9fd;
+  font-family: 'Bricolage Grotesque', sans-serif;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.participant-context-menu__header small,
+.participant-context-menu__mute small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.participant-context-menu__mute {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 46px;
+  padding: 8px 10px;
+  color: #ffd6dc;
+  text-align: left;
+  border: 1px solid rgba(255, 96, 123, 0.2);
+  border-radius: 11px;
+  background: rgba(255, 96, 123, 0.08);
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.participant-context-menu__mute:hover,
+.participant-context-menu__mute:focus-visible {
+  border-color: rgba(255, 96, 123, 0.5);
+  background: rgba(255, 96, 123, 0.14);
+  transform: translateY(-1px);
+}
+
+.participant-context-menu__mute.is-muted {
+  color: #b8f9f2;
+  border-color: rgba(59, 214, 198, 0.25);
+  background: rgba(59, 214, 198, 0.09);
+}
+
+.participant-context-menu__mute strong {
+  color: currentColor;
+  font-size: 9px;
+}
+
+.participant-context-menu__levels {
+  display: grid;
+  gap: 11px;
+  padding: 3px 4px;
+}
+
+.participant-context-menu__levels label {
+  display: grid;
+  gap: 7px;
+}
+
+.participant-context-menu__levels label > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 8px;
+}
+
+.participant-context-menu__levels strong {
+  color: #edf6fd;
+}
+
+.participant-context-menu__levels output {
+  color: var(--mint);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.participant-context-menu__levels input[type='range'] {
+  width: 100%;
+  accent-color: var(--mint);
+  cursor: pointer;
+}
+
+.participant-context-menu__levels .is-screen input[type='range'] {
+  accent-color: var(--coral);
+}
+
+.participant-context-menu__levels .is-screen output {
+  color: #ffb2a7;
+}
+
+.participant-context-menu > p {
+  margin: 0;
+  padding: 8px 5px 3px;
+  color: #7f8ea0;
+  border-top: 1px solid rgba(218, 235, 250, 0.08);
+  font-size: 7px;
+  line-height: 1.45;
 }
 
 .participant-tile:has(.participant-volume) .participant-tile__footer {

@@ -6,7 +6,7 @@ import type {
   SignalPayload,
 } from '../types'
 import {
-  SCREEN_SHARE_VIDEO_CONSTRAINTS,
+  SCREEN_SHARE_DISPLAY_OPTIONS,
   configureScreenSender,
   configureScreenTrack,
   type ScreenShareQuality,
@@ -77,6 +77,8 @@ function configuredIceServers(): RTCIceServer[] {
 
 const rtcConfiguration: RTCConfiguration = {
   iceServers: configuredIceServers(),
+  bundlePolicy: 'max-bundle',
+  iceCandidatePoolSize: 8,
 }
 
 function describeMediaError(error: unknown) {
@@ -1014,12 +1016,7 @@ export function useCall({
     setScreenShareStarting(true)
     try {
       setMediaError(null)
-      capturedStream = await navigator.mediaDevices.getDisplayMedia({
-        video: SCREEN_SHARE_VIDEO_CONSTRAINTS,
-        audio: true,
-        systemAudio: 'include',
-        surfaceSwitching: 'include',
-      } as DisplayMediaStreamOptions)
+      capturedStream = await navigator.mediaDevices.getDisplayMedia(SCREEN_SHARE_DISPLAY_OPTIONS)
       if (requestEpoch !== mediaEpochRef.current || statusRef.current !== 'joined') {
         for (const track of capturedStream.getTracks()) track.stop()
         return
@@ -1030,6 +1027,7 @@ export function useCall({
         throw new Error('A captura não forneceu vídeo.')
       }
       const screenAudioTrack = capturedStream.getAudioTracks().find((track) => track.readyState === 'live') || null
+      if (screenAudioTrack && 'contentHint' in screenAudioTrack) screenAudioTrack.contentHint = 'music'
 
       const quality = await configureScreenTrack(screenTrack)
       if (requestEpoch !== mediaEpochRef.current || statusRef.current !== 'joined') {

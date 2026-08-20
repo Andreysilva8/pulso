@@ -10,7 +10,9 @@ import {
   configureScreenTrack,
   createScreenShareDisplayOptions,
   DEFAULT_SCREEN_SHARE_SETTINGS,
+  loadScreenShareSettings,
   prepareSafeScreenAudio,
+  saveScreenShareSettings,
   screenShareProfile,
   type ScreenShareSettings,
   type ScreenShareQuality,
@@ -20,6 +22,13 @@ import {
   startScreenRelay,
   type ScreenRelayController,
 } from '../lib/screenRelay'
+import {
+  aggregateScreenShareSendTelemetry,
+  sampleScreenShareSenderStats,
+  type ScreenShareSendTelemetry,
+  type ScreenShareSenderStatsSample,
+  type ScreenShareSenderStatsSnapshot,
+} from '../lib/screenShareTelemetry'
 
 type CallStatus = 'idle' | 'preview' | 'joining' | 'joined'
 
@@ -151,8 +160,9 @@ export function useCall({
   const [screenAudioSystemWide, setScreenAudioSystemWide] = useState(false)
   const [screenAudioProtected, setScreenAudioProtected] = useState(false)
   const [screenShareQuality, setScreenShareQuality] = useState<ScreenShareQuality | null>(null)
+  const [screenShareSendTelemetry, setScreenShareSendTelemetry] = useState<ScreenShareSendTelemetry | null>(null)
   const [activeScreenShareSettings, setActiveScreenShareSettings] = useState<ScreenShareSettings>(
-    DEFAULT_SCREEN_SHARE_SETTINGS,
+    () => loadScreenShareSettings(),
   )
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [audioInputDevices, setAudioInputDevices] = useState<AudioInputOption[]>([])
@@ -183,7 +193,9 @@ export function useCall({
   const cameraSwitchRequestRef = useRef(0)
   const screenShareStartingRef = useRef(false)
   const screenShareRequestRef = useRef(0)
-  const screenShareSettingsRef = useRef<ScreenShareSettings>(DEFAULT_SCREEN_SHARE_SETTINGS)
+  const screenShareSettingsRef = useRef<ScreenShareSettings>(activeScreenShareSettings)
+  const screenShareStatsSnapshotsRef = useRef(new Map<string, ScreenShareSenderStatsSnapshot>())
+  const screenShareTelemetryTimerRef = useRef<number | null>(null)
   const screenRelayRef = useRef<ScreenRelayController | null>(null)
   const screenRelayStartingRef = useRef<Promise<void> | null>(null)
   const screenRelaySubscribersRef = useRef(new Set<string>())
@@ -362,6 +374,15 @@ export function useCall({
         peerRecordsRef.current.size,
       )
     }
+  }, [])
+
+  const resetScreenShareTelemetry = useCallback(() => {
+    if (screenShareTelemetryTimerRef.current !== null) {
+      window.clearTimeout(screenShareTelemetryTimerRef.current)
+      screenShareTelemetryTimerRef.current = null
+    }
+    screenShareStatsSnapshotsRef.current.clear()
+    setScreenShareSendTelemetry(null)
   }, [])
 
   const stopCompatibilityRelayIfIdle = useCallback((force = false) => {
@@ -891,6 +912,7 @@ export function useCall({
 
   const stopScreenShare = useCallback(async () => {
     const stream = screenStreamRef.current
+    resetScreenShareTelemetry()
     stopCompatibilityRelayIfIdle(true)
     screenRelaySubscribersRef.current.clear()
     screenStreamRef.current = null
@@ -911,7 +933,14 @@ export function useCall({
       updateRealtimeCall(currentMediaState())
       notifyScreenRelayStop()
     }
-  }, [currentMediaState, notifyScreenRelayStop, stopCompatibilityRelayIfIdle, syncPeerSenders, updateRealtimeCall])
+  }, [
+    currentMediaState,
+    notifyScreenRelayStop,
+    resetScreenShareTelemetry,
+    stopCompatibilityRelayIfIdle,
+    syncPeerSenders,
+    updateRealtimeCall,
+  ])
 
   const leave = useCallback(() => {
     mediaEpochRef.current += 1
@@ -919,6 +948,7 @@ export function useCall({
     microphoneSwitchRequestRef.current += 1
     cameraSwitchRequestRef.current += 1
     screenShareRequestRef.current += 1
+    resetScreenShareTelemetry()
     leaveRealtimeCall()
     closeAllPeers()
     stopCompatibilityRelayIfIdle(true)
@@ -970,7 +1000,7 @@ export function useCall({
     for (const player of relayAudioPlayersRef.current.values()) void player.context.close().catch(() => undefined)
     relayAudioPlayersRef.current.clear()
     relayScreenVolumesRef.current.clear()
-  }, [closeAllPeers, leaveRealtimeCall, stopCompatibilityRelayIfIdle])
+  }, [closeAllPeers, leaveRealtimeCall, resetScreenShareTelemetry, stopCompatibilityRelayIfIdle])
 
   const toggleMicrophone = useCallback(async () => {
     if (microphoneSwitchingRef.current) return
@@ -1127,6 +1157,7 @@ export function useCall({
       setScreenAudioSystemWide(screenAudioSafety.systemWide)
       setScreenAudioProtected(screenAudioSafety.blockedSystemAudio)
       setActiveScreenShareSettings(settings)
+      saveScreenShareSettings(settings)
       setScreenShareQuality(quality)
       screenTrack.onended = () => { void stopScreenShare() }
       if (screenAudioTrack) {
@@ -1167,6 +1198,96 @@ export function useCall({
   ])
 
   useEffect(() => {
+    if (!sharingScreen) {
+      resetScreenShareTelemetry()
+      return
+    }
+
+    let cancelled = false
+
+    const scheduleNextSample = () => {
+      if (cancelled || !sharingScreenRef.current) return
+      screenShareTelemetryTimerRef.current = window.setTimeout(() => {
+        screenShareTelemetryTimerRef.current = null
+        void collectSample()
+      }, 2_000)
+    }
+
+    const collectSample = async () => {
+      if (cancelled || !sharingScreenRef.current) return
+
+      const peers = [...peerRecordsRef.current.entries()]
+      if (!peers.length) {
+        screenShareStatsSnapshotsRef.current.clear()
+        setScreenShareSendTelemetry(aggregateScreenShareSendTelemetry([], 0))
+        scheduleNextSample()
+        return
+      }
+
+      const activeScreenTrack = screenStreamRef.current?.getVideoTracks()[0]
+      const readyPeers = activeScreenTrack
+        ? peers.filter(([, record]) => record.videoTransceiver.sender.track?.id === activeScreenTrack.id)
+        : []
+      if (readyPeers.length !== peers.length) {
+        setScreenShareSendTelemetry({
+          status: 'sampling',
+          fps: null,
+          bitrateMbps: null,
+          peerCount: peers.length,
+          sampledPeerCount: 0,
+          complete: false,
+        })
+        scheduleNextSample()
+        return
+      }
+
+      const livePeerIds = new Set(readyPeers.map(([peerId]) => peerId))
+      for (const peerId of screenShareStatsSnapshotsRef.current.keys()) {
+        if (!livePeerIds.has(peerId)) screenShareStatsSnapshotsRef.current.delete(peerId)
+      }
+
+      const samples = await Promise.all(readyPeers.map(async ([peerId, record]): Promise<ScreenShareSenderStatsSample> => {
+        try {
+          const report = await record.videoTransceiver.sender.getStats()
+          const sample = sampleScreenShareSenderStats(
+            report,
+            screenShareStatsSnapshotsRef.current.get(peerId),
+          )
+          if (sample.snapshot) screenShareStatsSnapshotsRef.current.set(peerId, sample.snapshot)
+          else screenShareStatsSnapshotsRef.current.delete(peerId)
+          return sample
+        } catch {
+          screenShareStatsSnapshotsRef.current.delete(peerId)
+          return { status: 'unavailable', snapshot: null, fps: null, bitrateBps: null }
+        }
+      }))
+
+      if (cancelled || !sharingScreenRef.current) return
+      setScreenShareSendTelemetry(aggregateScreenShareSendTelemetry(samples, peers.length))
+      scheduleNextSample()
+    }
+
+    setScreenShareSendTelemetry({
+      status: peerRecordsRef.current.size ? 'sampling' : 'waiting',
+      fps: null,
+      bitrateMbps: null,
+      peerCount: peerRecordsRef.current.size,
+      sampledPeerCount: 0,
+      complete: peerRecordsRef.current.size === 0,
+    })
+    void collectSample()
+
+    return () => {
+      cancelled = true
+      if (screenShareTelemetryTimerRef.current !== null) {
+        window.clearTimeout(screenShareTelemetryTimerRef.current)
+        screenShareTelemetryTimerRef.current = null
+      }
+      screenShareStatsSnapshotsRef.current.clear()
+    }
+  }, [resetScreenShareTelemetry, sharingScreen])
+
+  useEffect(() => {
     const previous = previousRealtimeStatusRef.current
     previousRealtimeStatusRef.current = realtimeStatus
     if (previous === 'connected' && realtimeStatus !== 'connected') return
@@ -1182,6 +1303,8 @@ export function useCall({
       mediaEpochRef.current += 1
       if (statusRef.current === 'joined') leaveRealtimeCall()
       stopCompatibilityRelayIfIdle(true)
+      sharingScreenRef.current = false
+      resetScreenShareTelemetry()
       screenRelaySubscribersRef.current.clear()
       for (const record of peerRecordsRef.current.values()) record.pc.close()
       for (const track of screenStreamRef.current?.getTracks() || []) track.stop()
@@ -1190,7 +1313,7 @@ export function useCall({
     }
     window.addEventListener('pagehide', handlePageHide)
     return () => window.removeEventListener('pagehide', handlePageHide)
-  }, [leaveRealtimeCall, stopCompatibilityRelayIfIdle])
+  }, [leaveRealtimeCall, resetScreenShareTelemetry, stopCompatibilityRelayIfIdle])
 
   return {
     status,
@@ -1208,6 +1331,7 @@ export function useCall({
     screenAudioSystemWide,
     screenAudioProtected,
     screenShareQuality,
+    screenShareSendTelemetry,
     activeScreenShareSettings,
     mediaError,
     audioInputDevices,

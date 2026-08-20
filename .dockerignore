@@ -1,5 +1,7 @@
 node_modules
+desktop/node_modules
 dist
+release
 .env
 .env.*
 .git
@@ -9,4 +11,3 @@ infra
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
-

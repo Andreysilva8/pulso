@@ -312,6 +312,7 @@ export default function App() {
               localProfile={profile}
               localMedia={localMedia}
               screenShareQuality={call.screenShareQuality}
+              screenShareSendTelemetry={call.screenShareSendTelemetry}
               activeScreenShareSettings={call.activeScreenShareSettings}
               screenAudioOn={call.screenAudioOn}
               screenAudioSystemWide={call.screenAudioSystemWide}

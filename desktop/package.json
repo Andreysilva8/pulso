@@ -1,0 +1,60 @@
+{
+  "name": "pulso-desktop",
+  "productName": "Pulso",
+  "version": "0.1.0",
+  "description": "Aplicativo Pulso para chamadas, câmera, microfone e compartilhamento de tela.",
+  "private": true,
+  "main": "src/main.cjs",
+  "author": "Andrey Silva",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "icon": "node scripts/generate-icon.cjs",
+    "start": "electron .",
+    "smoke": "electron --in-process-gpu --disable-gpu-compositing . --smoke-test",
+    "test": "node --test test/*.test.cjs",
+    "make": "npm run icon && npm test && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "electron": "43.4.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.pulso.desktop",
+    "productName": "Pulso",
+    "asar": true,
+    "afterPack": "after-pack.cjs",
+    "directories": {
+      "output": "../release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Pulso-Desktop-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Pulso",
+      "uninstallDisplayName": "Pulso"
+    }
+  }
+}

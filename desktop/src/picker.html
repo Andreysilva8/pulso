@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'" />
+    <title>Escolha o que compartilhar — Pulso</title>
+    <link rel="stylesheet" href="picker.css" />
+  </head>
+  <body>
+    <main>
+      <header class="picker-header">
+        <div class="picker-brand" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <p class="eyebrow">Pulso Desktop</p>
+          <h1>O que você quer mostrar?</h1>
+          <p>Escolha uma tela inteira ou somente uma janela. Nada começa antes da sua confirmação.</p>
+        </div>
+      </header>
+
+      <div class="picker-tabs" role="tablist" aria-label="Tipo de fonte">
+        <button id="screens-tab" type="button" role="tab" aria-selected="true">Telas inteiras</button>
+        <button id="windows-tab" type="button" role="tab" aria-selected="false">Janelas</button>
+      </div>
+
+      <section id="source-grid" class="source-grid" aria-live="polite" aria-label="Fontes disponíveis">
+        <div class="loading-state"><span></span><p>Buscando suas telas e janelas…</p></div>
+      </section>
+
+      <footer class="picker-footer">
+        <label id="audio-option" class="audio-option is-disabled">
+          <input id="include-audio" type="checkbox" disabled />
+          <span class="audio-option__check" aria-hidden="true">✓</span>
+          <span><strong>Compartilhar áudio do computador</strong><small>Desligado por padrão para evitar retorno. O Pulso exclui o próprio áudio quando o Windows permite.</small></span>
+        </label>
+        <div class="picker-actions">
+          <button id="cancel-button" class="secondary-button" type="button">Cancelar</button>
+          <button id="share-button" class="primary-button" type="button" disabled>Compartilhar</button>
+        </div>
+      </footer>
+    </main>
+    <script src="picker.js"></script>
+  </body>
+</html>

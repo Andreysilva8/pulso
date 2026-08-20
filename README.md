@@ -24,6 +24,20 @@ Depois abra `http://localhost:4173`.
 
 O servidor de produção usa `HOST=127.0.0.1` por padrão. Em container, defina `HOST=0.0.0.0` e publique a porta somente no loopback do host, atrás de HTTPS.
 
+## Aplicativo para Windows
+
+O pacote `desktop/` cria um aplicativo Windows separado que abre a versão publicada do Pulso em um Electron protegido. Ele oferece seletor próprio de tela/janela, áudio do computador com consentimento explícito, evita reduzir a atividade quando a janela é minimizada e começa em 720p/60 fps. A última qualidade escolhida também fica salva.
+
+```bash
+npm run desktop:install
+npm run desktop:smoke
+npm run desktop:make
+```
+
+O instalador é gerado em `release/Pulso-Desktop-Setup-0.1.0.exe`. Ele ainda não possui assinatura de código, então versões de teste podem exibir um aviso do Windows SmartScreen.
+
+O aplicativo melhora o controle da captura e a estabilidade no Windows, mas 60 fps continua sendo um alvo: CPU, upload, quantidade de espectadores e o caminho de rede definem a taxa efetiva. O banner da transmissão mostra o FPS realmente codificado e o bitrate total. Se surgir `Compatível · 12 fps`, a conexão direta falhou e o ganho estrutural necessário é TURN/SFU, não um computador mais rápido.
+
 ## Publicação temporária por 10 horas
 
 Para gerar um endereço HTTPS público sem criar conta em um provedor:
@@ -53,6 +67,8 @@ Ela usa por padrão 1 OCPU, 6 GB de RAM e boot de 50 GB. A aplicação fica prot
 - salas de voz com múltiplos participantes em malha P2P;
 - áudio, vídeo, mute e câmera on/off;
 - compartilhamento de tela com perfis selecionáveis de 480p, 720p ou 1080p e 15, 30 ou 60 fps; o padrão é 720p/30 fps para reduzir travamentos, com bitrate adaptado à quantidade de espectadores;
+- aplicativo Windows com perfil inicial 720p/60, seletor explícito de tela/janela e áudio loopback protegido;
+- telemetria durante a transmissão com FPS realmente codificado por espectador e bitrate total enviado;
 - detecção de falha real da trilha WebRTC sem confundir uma tela estática com congelamento, e modo compatível de tela/áudio em até 960×540/12 fps, ativado sob demanda somente para o espectador afetado;
 - áudio de aba, janela e tela inteira quando o navegador confirma o filtro antieco; áudio de sistema sem esse filtro é bloqueado antes de chegar ao WebRTC/relay;
 - câmera desligada por padrão, adquirida somente após clique explícito e completamente liberada ao desligar;
@@ -110,3 +126,5 @@ Node.js + Express + ws
 - `npm start` — servidor de produção na porta 4173;
 - `npm test` — testes unitários e de tempo real;
 - `npm run test:realtime` — somente o smoke test WebSocket.
+- `npm run desktop:smoke` — valida o aplicativo contra a publicação do Render;
+- `npm run desktop:make` — testa e gera o instalador do Windows.

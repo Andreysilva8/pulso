@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   SCREEN_SHARE_DISPLAY_OPTIONS,
+  DESKTOP_SCREEN_SHARE_SETTINGS,
   SCREEN_SHARE_FRAME_RATE,
   SCREEN_SHARE_HEIGHT,
   SCREEN_SHARE_MAX_BITRATE,
@@ -8,7 +9,10 @@ import {
   SCREEN_SHARE_WIDTH,
   configureScreenSender,
   createScreenShareDisplayOptions,
+  loadScreenShareSettings,
   prepareSafeScreenAudio,
+  preferredScreenShareSettings,
+  saveScreenShareSettings,
   screenShareProfile,
   screenShareSenderBitrate,
   screenShareVideoConstraints,
@@ -25,6 +29,37 @@ describe('screen-share quality profile', () => {
       frameRate: { ideal: 30, max: 30 },
     })
     expect(SCREEN_SHARE_MAX_BITRATE).toBe(3_000_000)
+  })
+
+  it('starts the Windows desktop app at 720p60 and keeps the browser at 720p30', () => {
+    expect(preferredScreenShareSettings('Mozilla/5.0 Electron/43.4.1')).toEqual(
+      DESKTOP_SCREEN_SHARE_SETTINGS,
+    )
+    expect(preferredScreenShareSettings('Mozilla/5.0 Chrome/140.0')).toEqual({
+      resolution: 720,
+      frameRate: 30,
+    })
+  })
+
+  it('saves a valid choice and safely restores it on the next transmission', () => {
+    let stored = ''
+    const storage = {
+      getItem: () => stored,
+      setItem: (_key: string, value: string) => { stored = value },
+    }
+    expect(saveScreenShareSettings({ resolution: 1080, frameRate: 60 }, storage)).toBe(true)
+    expect(loadScreenShareSettings(storage, 'Mozilla/5.0 Chrome/140.0')).toEqual({
+      resolution: 1080,
+      frameRate: 60,
+    })
+  })
+
+  it('ignores malformed saved quality and uses the platform recommendation', () => {
+    const storage = { getItem: () => '{"resolution":999,"frameRate":75}' }
+    expect(loadScreenShareSettings(storage, 'Electron/43.4.1')).toEqual({
+      resolution: 720,
+      frameRate: 60,
+    })
   })
 
   it.each([

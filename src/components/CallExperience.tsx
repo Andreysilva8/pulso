@@ -30,7 +30,36 @@ import {
   type ScreenShareQuality,
   type ScreenShareSettings,
 } from '../lib/screenShare'
+import type { ScreenShareSendTelemetry } from '../lib/screenShareTelemetry'
 import { EmptyCallTile, IconButton, MediaPreview, ParticipantTile } from './ui'
+
+const telemetryNumber = new Intl.NumberFormat('pt-BR', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
+})
+
+function screenShareSendLabel(telemetry: ScreenShareSendTelemetry | null) {
+  if (!telemetry || telemetry.status === 'sampling') return 'medindo o envio real…'
+  if (telemetry.status === 'waiting') return 'envio aguardando espectador'
+  if (telemetry.status === 'unavailable') return 'medição do envio indisponível'
+
+  const bitrate = telemetry.bitrateMbps === null
+    ? null
+    : `${telemetryNumber.format(telemetry.bitrateMbps)} Mb/s`
+  if (telemetry.status === 'static') {
+    return bitrate ? `tela estática · envio ${bitrate}` : 'tela estática · envio ativo'
+  }
+
+  const fps = telemetry.fps === null
+    ? '—'
+    : telemetry.fps > 0 && telemetry.fps < 1
+      ? '<1'
+      : telemetryNumber.format(telemetry.fps)
+  const partialSample = telemetry.complete
+    ? ''
+    : ` · amostra ${telemetry.sampledPeerCount}/${telemetry.peerCount}`
+  return `envio ${fps} fps · ${bitrate || 'bitrate indisponível'}${partialSample}`
+}
 
 function MicrophoneSelect({
   devices,
@@ -385,6 +414,7 @@ export function CallStage({
   localProfile,
   localMedia,
   screenShareQuality,
+  screenShareSendTelemetry,
   activeScreenShareSettings,
   screenAudioOn,
   screenAudioSystemWide,
@@ -411,6 +441,7 @@ export function CallStage({
   localProfile: Profile
   localMedia: MediaState
   screenShareQuality: ScreenShareQuality | null
+  screenShareSendTelemetry: ScreenShareSendTelemetry | null
   activeScreenShareSettings: ScreenShareSettings
   screenAudioOn: boolean
   screenAudioSystemWide: boolean
@@ -476,6 +507,8 @@ export function CallStage({
             {screenShareQuality?.frameRate
               ? ` · captura ${Math.round(screenShareQuality.frameRate)} fps`
               : ''}
+            {' · '}
+            {screenShareSendLabel(screenShareSendTelemetry)}
           </span>
           <span className={`sharing-banner__audio ${screenAudioOn ? 'is-on' : 'is-off'}`}>
             {screenAudioOn ? <Volume2 size={15} /> : <VolumeX size={15} />}

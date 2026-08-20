@@ -19,6 +19,62 @@ export const DEFAULT_SCREEN_SHARE_SETTINGS: ScreenShareSettings = {
   frameRate: 30,
 }
 
+export const DESKTOP_SCREEN_SHARE_SETTINGS: ScreenShareSettings = {
+  resolution: 720,
+  frameRate: 60,
+}
+
+export const SCREEN_SHARE_SETTINGS_STORAGE_KEY = 'pulso:screen-share-settings'
+
+export function isPulsoDesktop(
+  userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+) {
+  return /\bElectron\/\d+/i.test(userAgent)
+}
+
+export function preferredScreenShareSettings(
+  userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+): ScreenShareSettings {
+  return isPulsoDesktop(userAgent)
+    ? { ...DESKTOP_SCREEN_SHARE_SETTINGS }
+    : { ...DEFAULT_SCREEN_SHARE_SETTINGS }
+}
+
+export function isScreenShareSettings(value: unknown): value is ScreenShareSettings {
+  if (!value || typeof value !== 'object') return false
+  const settings = value as Partial<ScreenShareSettings>
+  return SCREEN_SHARE_RESOLUTION_OPTIONS.some(({ resolution }) => resolution === settings.resolution)
+    && SCREEN_SHARE_FRAME_RATE_OPTIONS.includes(settings.frameRate as ScreenShareFrameRate)
+}
+
+export function loadScreenShareSettings(
+  storage: Pick<Storage, 'getItem'> | null = typeof window === 'undefined' ? null : window.localStorage,
+  userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+): ScreenShareSettings {
+  if (storage) {
+    try {
+      const saved = JSON.parse(storage.getItem(SCREEN_SHARE_SETTINGS_STORAGE_KEY) || 'null')
+      if (isScreenShareSettings(saved)) return { ...saved }
+    } catch {
+      // Ignore inaccessible storage and malformed preferences.
+    }
+  }
+  return preferredScreenShareSettings(userAgent)
+}
+
+export function saveScreenShareSettings(
+  settings: ScreenShareSettings,
+  storage: Pick<Storage, 'setItem'> | null = typeof window === 'undefined' ? null : window.localStorage,
+) {
+  if (!storage || !isScreenShareSettings(settings)) return false
+  try {
+    storage.setItem(SCREEN_SHARE_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
+    return true
+  } catch {
+    return false
+  }
+}
+
 const BITRATE_BY_RESOLUTION: Record<ScreenShareResolution, Record<ScreenShareFrameRate, number>> = {
   480: { 15: 700_000, 30: 1_200_000, 60: 2_000_000 },
   720: { 15: 1_200_000, 30: 3_000_000, 60: 5_000_000 },

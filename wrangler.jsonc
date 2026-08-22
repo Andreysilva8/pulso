@@ -31,7 +31,12 @@
   "vars": {
     "DEFAULT_WORKSPACE_ID": "pulso-publico",
     "MAX_CLIENTS_PER_WORKSPACE": "100",
-    "CLOUDFLARE_TURN_TTL": "3600"
+    "CLOUDFLARE_TURN_TTL": "900",
+    "TURN_MIN_GRANT_INTERVAL_SECONDS": "600",
+    "TURN_MAX_GRANTS_PER_SESSION_DAY": "12",
+    "TURN_MAX_GRANTS_PER_IP_DAY": "24",
+    "TURN_MAX_GRANTS_PER_ROOM_DAY": "96",
+    "TURN_MAX_GRANTS_PER_WORKSPACE_DAY": "192"
   },
   "observability": {
     "enabled": true

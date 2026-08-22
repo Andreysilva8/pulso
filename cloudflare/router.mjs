@@ -1,4 +1,35 @@
 const DEFAULT_WORKSPACE_ID = 'pulso'
+const INTERNAL_TURN_CLIENT_HEADER = 'x-pulso-turn-client'
+const MIN_RATE_LIMIT_SECRET_LENGTH = 32
+
+function bytesToBase64Url(value) {
+  let binary = ''
+  for (const byte of new Uint8Array(value)) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+export async function turnClientKey(request, env, workspaceId) {
+  const clientIp = request.headers.get('CF-Connecting-IP')?.trim() || ''
+  const secret = typeof env.TURN_RATE_LIMIT_SECRET === 'string'
+    ? env.TURN_RATE_LIMIT_SECRET.trim()
+    : ''
+  if (!clientIp || clientIp.length > 64 || secret.length < MIN_RATE_LIMIT_SECRET_LENGTH) return ''
+
+  const encoder = new TextEncoder()
+  const hmacKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    hmacKey,
+    encoder.encode(`${workspaceId}\0${clientIp}`),
+  )
+  return bytesToBase64Url(signature)
+}
 
 export function safeWorkspaceId(value, fallback = DEFAULT_WORKSPACE_ID) {
   const candidate = typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -59,7 +90,11 @@ export async function handleRequest(request, env) {
       return new Response('WebSocket upgrade necessário.', { status: 426 })
     }
     if (!isAllowedOrigin(request, env)) return new Response('Origin não permitida.', { status: 403 })
-    return workspaceStub(env, workspaceId).fetch(request)
+    const headers = new Headers(request.headers)
+    headers.delete(INTERNAL_TURN_CLIENT_HEADER)
+    const clientKey = await turnClientKey(request, env, workspaceId)
+    if (clientKey) headers.set(INTERNAL_TURN_CLIENT_HEADER, clientKey)
+    return workspaceStub(env, workspaceId).fetch(new Request(request, { headers }))
   }
 
   if (env.ASSETS?.fetch) return env.ASSETS.fetch(request)

@@ -71,6 +71,7 @@ O primeiro deploy pode ser feito sem TURN e usa apenas STUN/WebRTC direto. Para 
 ```bash
 npx wrangler secret put CLOUDFLARE_TURN_KEY_ID
 npx wrangler secret put CLOUDFLARE_TURN_API_TOKEN
+npx wrangler secret put TURN_RATE_LIMIT_SECRET
 ```
 
 Depois valide e publique:
@@ -83,7 +84,9 @@ npm run cloudflare:smoke
 npm run cloudflare:deploy
 ```
 
-Para desenvolvimento local, use `npm run cloudflare:dev`. O TTL padrão do TURN é 3.600 segundos; durante uma chamada, o heartbeat JSON que o cliente já envia renova a credencial aos 75% do TTL sem manter o Durable Object acordado com timers.
+Para desenvolvimento local, use `npm run cloudflare:dev`. O TTL padrão do TURN é 900 segundos; durante uma chamada, o heartbeat JSON que o cliente já envia renova a credencial aos 75% do TTL sem manter o Durable Object acordado com timers. `TURN_RATE_LIMIT_SECRET` deve ter pelo menos 32 caracteres e é usado somente para transformar `CF-Connecting-IP` em um HMAC irreversível antes de o Durable Object persistir o orçamento. Sem IP confiável ou esse secret, a chamada continua com STUN, mas nenhuma credencial TURN é emitida.
+
+O orçamento diário padrão permite 12 credenciais por sessão, 24 por HMAC de IP, 96 por sala e 192 no workspace, com intervalo mínimo de 600 segundos. Os valores ficam em `wrangler.jsonc`, podem ser reduzidos por ambiente e sobrevivem à hibernação do Durable Object. Somente as salas `cafe`, `palco` e `foco` podem iniciar chamadas no MVP público.
 
 O caminho de 1080p/60 fps continua sendo a trilha WebRTC direta ou assistida por TURN. O Worker não transforma quadros base64 em vídeo: o fallback continua intencionalmente limitado a 854×480 e até 30 fps, com descarte sob congestionamento. Isso protege a fluidez, a franquia gratuita e o limite diário de mensagens do Durable Object.
 
@@ -148,7 +151,7 @@ Cloudflare Workers (opção de produção)
 - Não há autenticação. Antes de publicar, adicione contas, autorização por comunidade e proteção contra abuso.
 - A receita OCI ativa uma senha HTTP no Caddy para não deixar esta demo aberta enquanto contas ainda não existem.
 - A chamada usa malha P2P, ideal para aproximadamente 2–4 pessoas. Salas maiores devem usar um SFU, como LiveKit, mediasoup ou Janus.
-- O STUN padrão não atravessa todas as redes. Em produção, configure `CLOUDFLARE_TURN_KEY_ID` e `CLOUDFLARE_TURN_API_TOKEN` somente no servidor; o Pulso gera credenciais temporárias e as entrega apenas ao participante depois que ele entra em uma chamada. `VITE_ICE_SERVERS` fica disponível apenas para ambientes de teste ou outro provedor compatível.
+- O STUN padrão não atravessa todas as redes. Em produção, configure `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_TURN_API_TOKEN` e `TURN_RATE_LIMIT_SECRET` somente no servidor; o Pulso gera credenciais temporárias e as entrega apenas ao participante depois que ele entra em uma chamada, respeitando cooldown e orçamentos diários. `VITE_ICE_SERVERS` fica disponível apenas para ambientes de teste ou outro provedor compatível.
 - Quando o vídeo direto ainda não entregou quadros, o modo compatível usa até 854×480 e tenta até 30 fps com quadros menores e descarte sob congestionamento. Ele evita a tela presa em “Conectando”, mas a cópia reduzida passa pelo servidor e não substitui TURN/SFU em produção.
 - Em Chrome 141 ou posterior, “Tela inteira” pode transmitir áudio com `restrictOwnAudio`; marque “Compartilhar áudio”. Em navegadores que não confirmam essa proteção, o Pulso mantém o vídeo mas bloqueia o áudio do sistema para impedir retorno infinito.
 - A integração segura com Cloudflare Realtime TURN acompanha o repositório; o relay TURN é um serviço externo e precisa das duas variáveis secretas no Render.

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { Workspace, createClientState } from './workspace.mjs'
+import { TURN_BUDGET_KEY, Workspace, createClientState } from './workspace.mjs'
+
+const DEFAULT_TEST_CLIENT_KEY = 'a'.repeat(43)
 
 class MockStorage {
   constructor() {
@@ -63,9 +65,9 @@ class MockSocket {
   }
 }
 
-function register(state, id) {
+function register(state, id, turnClientKey = DEFAULT_TEST_CLIENT_KEY) {
   const socket = new MockSocket()
-  socket.serializeAttachment(createClientState(id))
+  socket.serializeAttachment(createClientState(id, Date.now(), turnClientKey))
   state.sockets.push(socket)
   return socket
 }
@@ -91,6 +93,31 @@ function resetRelayCadence(socket, kind) {
   if (kind === 'frame') client.lastScreenFrameAt = 0
   else client.lastScreenAudioAt = 0
   socket.serializeAttachment(client)
+}
+
+function resetTurnCooldown(socket) {
+  const client = socket.deserializeAttachment()
+  client.turnRefreshAt = 0
+  client.turnIssuingUntil = 0
+  client.turnIssueId = null
+  socket.serializeAttachment(client)
+}
+
+function turnEnvironment(overrides = {}) {
+  let fetchCount = 0
+  return {
+    env: {
+      CLOUDFLARE_TURN_KEY_ID: 'turn-key',
+      CLOUDFLARE_TURN_API_TOKEN: 'turn-token',
+      CLOUDFLARE_TURN_TTL: '900',
+      __TEST_FETCH: async () => {
+        fetchCount += 1
+        return turnResponse(`grant-${fetchCount}`)
+      },
+      ...overrides,
+    },
+    fetchCount: () => fetchCount,
+  }
 }
 
 function deferred() {
@@ -369,6 +396,209 @@ test('TURN fica completamente ausente quando os secrets não estão configurados
   assert.equal(socket.sent.some((message) => message.type === 'session:ice-servers'), false)
 })
 
+test('attachment persiste somente o hash confiável, nunca IP ou secret', () => {
+  const hash = 'h'.repeat(43)
+  const client = createClientState('cliente', 123, hash)
+  const serialized = JSON.stringify(client)
+  assert.equal(client.turnClientKey, hash)
+  assert.equal(serialized.includes('203.0.113.10'), false)
+  assert.equal(serialized.includes('segredo-de-rate-limit'), false)
+  assert.equal(createClientState('sem-hash', 123, '203.0.113.10').turnClientKey, '')
+})
+
+test('secrets TURN sem hash confiável mantêm somente STUN e não consomem orçamento', async () => {
+  const state = new MockState()
+  const configured = turnEnvironment()
+  const workspace = new Workspace(state, configured.env)
+  const socket = register(state, 'sem-hash-confiavel', '')
+  await joinWorkspace(workspace, socket, 'Sem Hash')
+  await send(workspace, socket, {
+    type: 'call:join',
+    channelId: 'cafe',
+    media: { microphone: true, camera: false, screen: false, screenAudio: false },
+  })
+
+  assert.equal(configured.fetchCount(), 0)
+  assert.equal(socket.sent.some((message) => message.type === 'session:ice-servers'), false)
+  assert.equal(state.storage.values.has(TURN_BUDGET_KEY), false)
+})
+
+test('rejeita sala de chamada fora da allowlist antes de emitir TURN', async () => {
+  const state = new MockState()
+  const configured = turnEnvironment()
+  const workspace = new Workspace(state, configured.env)
+  const socket = register(state, 'sala-invalida')
+  await joinWorkspace(workspace, socket, 'Sala Inválida')
+  await send(workspace, socket, {
+    type: 'call:join',
+    channelId: 'sala-criada-pelo-atacante',
+    media: { microphone: true, camera: false, screen: false, screenAudio: false },
+  })
+
+  assert.equal(socket.deserializeAttachment().callChannelId, null)
+  assert.equal(configured.fetchCount(), 0)
+  assert.equal(state.storage.values.has(TURN_BUDGET_KEY), false)
+})
+
+test('join/leave repetido reutiliza cooldown e não gera nova credencial', async () => {
+  const state = new MockState()
+  const configured = turnEnvironment()
+  const workspace = new Workspace(state, configured.env)
+  const socket = register(state, 'cooldown')
+  await joinWorkspace(workspace, socket, 'Cooldown')
+  const join = {
+    type: 'call:join',
+    channelId: 'cafe',
+    media: { microphone: true, camera: false, screen: false, screenAudio: false },
+  }
+  await send(workspace, socket, join)
+  await send(workspace, socket, { type: 'call:leave' })
+  await send(workspace, socket, join)
+
+  assert.equal(configured.fetchCount(), 1)
+  assert.equal(socket.sent.filter((message) => message.type === 'session:ice-servers').length, 1)
+  assert.ok(socket.deserializeAttachment().turnRefreshAt > Date.now())
+})
+
+test('lock por sessão impede duas emissões concorrentes durante fetch externo', async () => {
+  const state = new MockState()
+  const fetchStarted = deferred()
+  const pendingFetch = deferred()
+  let fetchCount = 0
+  const workspace = new Workspace(state, {
+    CLOUDFLARE_TURN_KEY_ID: 'turn-key',
+    CLOUDFLARE_TURN_API_TOKEN: 'turn-token',
+    __TEST_FETCH: async () => {
+      fetchCount += 1
+      fetchStarted.resolve()
+      return pendingFetch.promise
+    },
+  })
+  const socket = register(state, 'concorrente')
+  await joinWorkspace(workspace, socket, 'Concorrente')
+  const joining = send(workspace, socket, {
+    type: 'call:join',
+    channelId: 'cafe',
+    media: { microphone: true, camera: false, screen: false, screenAudio: false },
+  })
+  await fetchStarted.promise
+  await send(workspace, socket, { type: 'ping' })
+  assert.equal(fetchCount, 1)
+  pendingFetch.resolve(turnResponse('unica'))
+  await joining
+
+  assert.equal(fetchCount, 1)
+  assert.equal(socket.sent.filter((message) => message.type === 'session:ice-servers').length, 1)
+  assert.equal(socket.deserializeAttachment().turnIssueId, null)
+  assert.equal(socket.deserializeAttachment().turnIssuingUntil, 0)
+})
+
+test('orçamento de sessão persiste depois de recriar o Durable Object', async () => {
+  const state = new MockState()
+  const configured = turnEnvironment({
+    TURN_MAX_GRANTS_PER_SESSION_DAY: '1',
+    TURN_MAX_GRANTS_PER_IP_DAY: '10',
+    TURN_MAX_GRANTS_PER_ROOM_DAY: '10',
+    TURN_MAX_GRANTS_PER_WORKSPACE_DAY: '10',
+  })
+  const socket = register(state, 'sessao-limitada')
+  const firstInstance = new Workspace(state, configured.env)
+  await joinWorkspace(firstInstance, socket, 'Sessão')
+  await send(firstInstance, socket, {
+    type: 'call:join',
+    channelId: 'cafe',
+    media: { microphone: true, camera: false, screen: false, screenAudio: false },
+  })
+  resetTurnCooldown(socket)
+
+  const restoredInstance = new Workspace(state, configured.env)
+  await send(restoredInstance, socket, { type: 'ping' })
+  assert.equal(configured.fetchCount(), 1)
+  assert.equal(state.storage.values.get(TURN_BUDGET_KEY).counts['session:sessao-limitada'], 1)
+})
+
+test('orçamento por hash limita reconexões do mesmo IP', async () => {
+  const state = new MockState()
+  const configured = turnEnvironment({
+    TURN_MAX_GRANTS_PER_SESSION_DAY: '10',
+    TURN_MAX_GRANTS_PER_IP_DAY: '1',
+    TURN_MAX_GRANTS_PER_ROOM_DAY: '10',
+    TURN_MAX_GRANTS_PER_WORKSPACE_DAY: '10',
+  })
+  const workspace = new Workspace(state, configured.env)
+  const sharedHash = 'i'.repeat(43)
+  const first = register(state, 'ip-primeiro', sharedHash)
+  const second = register(state, 'ip-reconectado', sharedHash)
+  await joinWorkspace(workspace, first, 'IP Um')
+  await joinWorkspace(workspace, second, 'IP Dois')
+  await send(workspace, first, {
+    type: 'call:join', channelId: 'cafe', media: { microphone: true },
+  })
+  await send(workspace, second, {
+    type: 'call:join', channelId: 'palco', media: { microphone: true },
+  })
+
+  assert.equal(configured.fetchCount(), 1)
+  assert.equal(state.storage.values.get(TURN_BUDGET_KEY).counts[`client:${sharedHash}`], 1)
+})
+
+test('orçamentos por sala e global bloqueiam novas emissões', async () => {
+  const roomState = new MockState()
+  const roomConfigured = turnEnvironment({
+    TURN_MAX_GRANTS_PER_SESSION_DAY: '10',
+    TURN_MAX_GRANTS_PER_IP_DAY: '10',
+    TURN_MAX_GRANTS_PER_ROOM_DAY: '1',
+    TURN_MAX_GRANTS_PER_WORKSPACE_DAY: '10',
+  })
+  const roomWorkspace = new Workspace(roomState, roomConfigured.env)
+  const roomFirst = register(roomState, 'room-1', 'j'.repeat(43))
+  const roomSecond = register(roomState, 'room-2', 'k'.repeat(43))
+  await joinWorkspace(roomWorkspace, roomFirst, 'Room Um')
+  await joinWorkspace(roomWorkspace, roomSecond, 'Room Dois')
+  await send(roomWorkspace, roomFirst, { type: 'call:join', channelId: 'cafe', media: {} })
+  await send(roomWorkspace, roomSecond, { type: 'call:join', channelId: 'cafe', media: {} })
+  assert.equal(roomConfigured.fetchCount(), 1)
+  assert.equal(roomState.storage.values.get(TURN_BUDGET_KEY).counts['room:cafe'], 1)
+
+  const globalState = new MockState()
+  const globalConfigured = turnEnvironment({
+    TURN_MAX_GRANTS_PER_SESSION_DAY: '10',
+    TURN_MAX_GRANTS_PER_IP_DAY: '10',
+    TURN_MAX_GRANTS_PER_ROOM_DAY: '10',
+    TURN_MAX_GRANTS_PER_WORKSPACE_DAY: '1',
+  })
+  const globalWorkspace = new Workspace(globalState, globalConfigured.env)
+  const globalFirst = register(globalState, 'global-1', 'l'.repeat(43))
+  const globalSecond = register(globalState, 'global-2', 'm'.repeat(43))
+  await joinWorkspace(globalWorkspace, globalFirst, 'Global Um')
+  await joinWorkspace(globalWorkspace, globalSecond, 'Global Dois')
+  await send(globalWorkspace, globalFirst, { type: 'call:join', channelId: 'cafe', media: {} })
+  await send(globalWorkspace, globalSecond, { type: 'call:join', channelId: 'palco', media: {} })
+  assert.equal(globalConfigured.fetchCount(), 1)
+  assert.equal(globalState.storage.values.get(TURN_BUDGET_KEY).counts.global, 1)
+})
+
+test('orçamento antigo é substituído na virada do dia UTC', async () => {
+  const state = new MockState()
+  const currentDay = Math.floor(Date.now() / (24 * 60 * 60 * 1_000))
+  state.storage.values.set(TURN_BUDGET_KEY, {
+    version: 1,
+    day: currentDay - 1,
+    counts: { global: 999, 'client:valor-antigo': 999 },
+  })
+  const configured = turnEnvironment({ TURN_MAX_GRANTS_PER_WORKSPACE_DAY: '1' })
+  const workspace = new Workspace(state, configured.env)
+  const socket = register(state, 'novo-dia', 'n'.repeat(43))
+  await joinWorkspace(workspace, socket, 'Novo Dia')
+  await send(workspace, socket, { type: 'call:join', channelId: 'foco', media: {} })
+
+  const budget = state.storage.values.get(TURN_BUDGET_KEY)
+  assert.equal(configured.fetchCount(), 1)
+  assert.equal(budget.day, currentDay)
+  assert.equal(budget.counts.global, 1)
+  assert.equal('client:valor-antigo' in budget.counts, false)
+})
+
 test('não restaura uma chamada encerrada enquanto a credencial TURN estava sendo gerada', async () => {
   const state = new MockState()
   const pendingFetch = deferred()
@@ -415,7 +645,7 @@ test('descarta a credencial TURN da sala anterior após trocar de chamada', asyn
         firstFetchStarted.resolve()
         return firstFetch.promise
       }
-      return turnResponse('current-ideias')
+      return turnResponse('current-palco')
     },
   })
   const socket = register(state, 'turn-room-race')
@@ -429,18 +659,20 @@ test('descarta a credencial TURN da sala anterior após trocar de chamada', asyn
   await firstFetchStarted.promise
   await send(workspace, socket, {
     type: 'call:join',
-    channelId: 'ideias',
+    channelId: 'palco',
     media: { microphone: true, camera: false, screen: false, screenAudio: false },
   })
+  assert.equal(fetchCount, 1)
   firstFetch.resolve(turnResponse('stale-cafe'))
   await joiningCafe
+  await send(workspace, socket, { type: 'ping' })
 
   const client = socket.deserializeAttachment()
   const turnMessages = socket.sent.filter((message) => message.type === 'session:ice-servers')
-  assert.equal(client.callChannelId, 'ideias')
+  assert.equal(client.callChannelId, 'palco')
   assert.ok(client.turnRefreshAt > Date.now())
   assert.equal(turnMessages.length, 1)
-  assert.equal(turnMessages[0].iceServers[0].username, 'current-ideias')
+  assert.equal(turnMessages[0].iceServers[0].username, 'current-palco')
 })
 
 test('attachments e storage restauram chamada e histórico depois de hibernação', async () => {

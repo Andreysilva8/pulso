@@ -16,6 +16,17 @@ const ATTACHMENT_VERSION = 1
 const MESSAGES_INDEX_KEY = 'messages:index:v1'
 const MESSAGES_CHANNEL_PREFIX = 'messages:channel:v1:'
 const MAX_STORED_CHANNELS = 32
+export const TURN_BUDGET_KEY = 'turn:budget:v1'
+
+const DAY_MS = 24 * 60 * 60 * 1_000
+const TURN_ISSUE_LOCK_MS = 10_000
+const DEFAULT_TURN_MIN_GRANT_INTERVAL_SECONDS = 600
+const DEFAULT_TURN_MAX_GRANTS_PER_SESSION_DAY = 12
+const DEFAULT_TURN_MAX_GRANTS_PER_CLIENT_DAY = 24
+const DEFAULT_TURN_MAX_GRANTS_PER_ROOM_DAY = 96
+const DEFAULT_TURN_MAX_GRANTS_PER_WORKSPACE_DAY = 192
+const TURN_CLIENT_KEY_PATTERN = /^[a-z0-9_-]{43}$/i
+const ALLOWED_CALL_CHANNELS = new Set(['cafe', 'palco', 'foco'])
 
 const palette = ['#ff816f', '#3bd6c6', '#ffc65c', '#80a8ff', '#d699ff']
 
@@ -53,7 +64,7 @@ function seedMessages() {
   }
 }
 
-export function createClientState(id = crypto.randomUUID(), now = Date.now()) {
+export function createClientState(id = crypto.randomUUID(), now = Date.now(), turnClientKey = '') {
   return {
     attachmentVersion: ATTACHMENT_VERSION,
     id,
@@ -74,11 +85,63 @@ export function createClientState(id = crypto.randomUUID(), now = Date.now()) {
     nextRelayId: 0,
     relayFlowBySender: {},
     turnRefreshAt: 0,
+    turnIssuingUntil: 0,
+    turnIssueId: null,
+    turnClientKey: TURN_CLIENT_KEY_PATTERN.test(turnClientKey) ? turnClientKey : '',
   }
 }
 
 function isChannelId(value) {
   return typeof value === 'string' && /^[a-z0-9-]{1,48}$/.test(value)
+}
+
+function isCallChannelId(value) {
+  return typeof value === 'string' && ALLOWED_CALL_CHANNELS.has(value)
+}
+
+function parseTurnLimit(value, fallback, maximum = 1_000_000) {
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) return fallback
+  return parsed
+}
+
+function turnLimits(env) {
+  return {
+    minGrantIntervalSeconds: parseTurnLimit(
+      env.TURN_MIN_GRANT_INTERVAL_SECONDS,
+      DEFAULT_TURN_MIN_GRANT_INTERVAL_SECONDS,
+      86_400,
+    ),
+    session: parseTurnLimit(
+      env.TURN_MAX_GRANTS_PER_SESSION_DAY,
+      DEFAULT_TURN_MAX_GRANTS_PER_SESSION_DAY,
+    ),
+    client: parseTurnLimit(
+      env.TURN_MAX_GRANTS_PER_IP_DAY,
+      DEFAULT_TURN_MAX_GRANTS_PER_CLIENT_DAY,
+    ),
+    room: parseTurnLimit(
+      env.TURN_MAX_GRANTS_PER_ROOM_DAY,
+      DEFAULT_TURN_MAX_GRANTS_PER_ROOM_DAY,
+    ),
+    workspace: parseTurnLimit(
+      env.TURN_MAX_GRANTS_PER_WORKSPACE_DAY,
+      DEFAULT_TURN_MAX_GRANTS_PER_WORKSPACE_DAY,
+    ),
+  }
+}
+
+function dailyTurnBudget(value, day) {
+  if (!value || value.version !== 1 || value.day !== day
+    || !value.counts || typeof value.counts !== 'object' || Array.isArray(value.counts)) {
+    return { version: 1, day, counts: {} }
+  }
+  return { version: 1, day, counts: { ...value.counts } }
+}
+
+function storedGrantCount(counts, key) {
+  const value = counts[key]
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0
 }
 
 function safeProfile(value) {
@@ -287,7 +350,11 @@ export class Workspace {
     const [clientSocket, serverSocket] = Object.values(pair)
     this.ctx.acceptWebSocket(serverSocket)
 
-    const client = createClientState()
+    const client = createClientState(
+      crypto.randomUUID(),
+      Date.now(),
+      request.headers.get('x-pulso-turn-client') || '',
+    )
     this.saveClient(serverSocket, client)
     this.send(serverSocket, { type: 'session:ready', clientId: client.id })
 
@@ -445,36 +512,108 @@ export class Workspace {
     return true
   }
 
-  async maybeRefreshTurn(socket, client, force = false) {
+  async reserveTurnGrant(client, now) {
+    const limits = turnLimits(this.env)
+    const day = Math.floor(now / DAY_MS)
+    const stored = await this.ctx.storage.get(TURN_BUDGET_KEY)
+    const budget = dailyTurnBudget(stored, day)
+    const dimensions = [
+      { key: 'global', limit: limits.workspace },
+      { key: `session:${client.id}`, limit: limits.session },
+      { key: `client:${client.turnClientKey}`, limit: limits.client },
+      { key: `room:${client.callChannelId}`, limit: limits.room },
+    ]
+
+    if (dimensions.some(({ key, limit }) => storedGrantCount(budget.counts, key) >= limit)) {
+      return { allowed: false, retryAt: (day + 1) * DAY_MS, limits }
+    }
+
+    for (const { key } of dimensions) {
+      budget.counts[key] = storedGrantCount(budget.counts, key) + 1
+    }
+    await this.ctx.storage.put(TURN_BUDGET_KEY, budget)
+    return { allowed: true, retryAt: 0, limits }
+  }
+
+  async maybeRefreshTurn(socket, client) {
     if (!this.env.CLOUDFLARE_TURN_KEY_ID || !this.env.CLOUDFLARE_TURN_API_TOKEN
-      || !client.profile || !client.callChannelId) return
+      || !client.profile || !isCallChannelId(client.callChannelId)
+      || !TURN_CLIENT_KEY_PATTERN.test(client.turnClientKey || '')) return
     const now = Date.now()
-    if (!force && client.turnRefreshAt > now) return
+    if (Number(client.turnRefreshAt) > now || Number(client.turnIssuingUntil) > now) return
+
     const refreshSession = {
       clientId: client.id,
       callChannelId: client.callChannelId,
       callJoinedAt: client.callJoinedAt,
+      issueId: crypto.randomUUID(),
     }
-    const currentRefreshClient = () => {
+    client.turnIssueId = refreshSession.issueId
+    client.turnIssuingUntil = now + TURN_ISSUE_LOCK_MS
+    this.saveClient(socket, client)
+
+    const issueClient = () => {
       if (!socketIsOpen(socket) || !this.ctx.getWebSockets().includes(socket)) return null
       const currentClient = this.readClient(socket)
       if (!currentClient
         || currentClient.id !== refreshSession.clientId
+        || currentClient.turnIssueId !== refreshSession.issueId) return null
+      return currentClient
+    }
+    const currentRefreshClient = () => {
+      const currentClient = issueClient()
+      if (!currentClient
         || currentClient.callChannelId !== refreshSession.callChannelId
         || currentClient.callJoinedAt !== refreshSession.callJoinedAt) return null
       return currentClient
+    }
+    const finishIssue = (currentClient) => {
+      currentClient.turnIssueId = null
+      currentClient.turnIssuingUntil = 0
+    }
+
+    const reservation = await this.reserveTurnGrant(client, now)
+    if (!reservation.allowed) {
+      const currentClient = issueClient()
+      if (!currentClient) return
+      finishIssue(currentClient)
+      currentClient.turnRefreshAt = reservation.retryAt
+      this.saveClient(socket, currentClient)
+      return
+    }
+
+    if (!currentRefreshClient()) {
+      const currentClient = issueClient()
+      if (currentClient) {
+        finishIssue(currentClient)
+        this.saveClient(socket, currentClient)
+      }
+      return
     }
 
     try {
       const config = await generateCloudflareIceServers({
         keyId: this.env.CLOUDFLARE_TURN_KEY_ID,
         apiToken: this.env.CLOUDFLARE_TURN_API_TOKEN,
-        ttl: Number(this.env.CLOUDFLARE_TURN_TTL || 3_600),
+        ttl: Number(this.env.CLOUDFLARE_TURN_TTL || 900),
         fetchImpl: this.env.__TEST_FETCH || fetch,
       })
-      const currentClient = currentRefreshClient()
-      if (!config || !currentClient) return
-      currentClient.turnRefreshAt = now + Math.max(5 * 60_000, Math.floor(config.ttlSeconds * 1_000 * 0.75))
+      const issuedClient = issueClient()
+      if (!issuedClient) return
+      finishIssue(issuedClient)
+      const currentClient = issuedClient.callChannelId === refreshSession.callChannelId
+        && issuedClient.callJoinedAt === refreshSession.callJoinedAt
+        ? issuedClient
+        : null
+      if (!config || !currentClient) {
+        this.saveClient(socket, issuedClient)
+        return
+      }
+      currentClient.turnRefreshAt = now + Math.max(
+        reservation.limits.minGrantIntervalSeconds * 1_000,
+        5 * 60_000,
+        Math.floor(config.ttlSeconds * 1_000 * 0.75),
+      )
       this.saveClient(socket, currentClient)
       this.send(socket, {
         type: 'session:ice-servers',
@@ -482,9 +621,13 @@ export class Workspace {
         expiresAt: config.expiresAt,
       })
     } catch (error) {
-      const currentClient = currentRefreshClient()
+      const currentClient = issueClient()
       if (!currentClient) return
-      currentClient.turnRefreshAt = now + 60_000
+      finishIssue(currentClient)
+      currentClient.turnRefreshAt = now + Math.max(
+        60_000,
+        reservation.limits.minGrantIntervalSeconds * 1_000,
+      )
       this.saveClient(socket, currentClient)
       console.warn('TURN temporário indisponível; mantendo conexão direta/STUN.', error?.message || 'erro desconhecido')
     }
@@ -508,7 +651,6 @@ export class Workspace {
     client.callJoinedAt = null
     client.media = defaultMedia()
     client.relayFlowBySender = {}
-    client.turnRefreshAt = 0
     this.saveClient(socket, client)
 
     this.broadcast(
@@ -634,7 +776,7 @@ export class Workspace {
       }
 
       case 'call:join': {
-        if (!client.profile || !isChannelId(message.channelId)) return
+        if (!client.profile || !isCallChannelId(message.channelId)) return
         if (client.callChannelId) this.leaveCall(socket, client)
 
         const existingPeers = this.callParticipants(message.channelId)
@@ -649,11 +791,10 @@ export class Workspace {
         }
         client.lastScreenAudioSequence = -1
         client.relayFlowBySender = {}
-        client.turnRefreshAt = 0
         this.saveClient(socket, client)
         this.send(socket, { type: 'call:peers', channelId: message.channelId, peers: existingPeers })
         this.broadcastCallPresence(message.channelId)
-        await this.maybeRefreshTurn(socket, client, true)
+        await this.maybeRefreshTurn(socket, client)
         break
       }
 

@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { generateCloudflareIceServers, sanitizeIceServers } from './turn.mjs'
+import { generateCloudflareIceServers, safeTurnTtl, sanitizeIceServers } from './turn.mjs'
+
+test('usa TTL curto por padrão e respeita os limites do provedor', () => {
+  assert.equal(safeTurnTtl(undefined), 900)
+  assert.equal(safeTurnTtl('900'), 900)
+  assert.equal(safeTurnTtl(1), 600)
+  assert.equal(safeTurnTtl(999_999), 172_800)
+})
 
 test('filtra porta 53 e configura somente ICE seguro', () => {
   assert.deepEqual(sanitizeIceServers([

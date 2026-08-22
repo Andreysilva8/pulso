@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { handleRequest, isAllowedOrigin, requestedWorkspaceId, safeWorkspaceId } from './router.mjs'
+import {
+  handleRequest,
+  isAllowedOrigin,
+  requestedWorkspaceId,
+  safeWorkspaceId,
+  turnClientKey,
+} from './router.mjs'
 
 function testEnvironment() {
   const calls = []
@@ -56,6 +62,24 @@ test('origem é same-host por padrão ou allowlist exata quando configurada', ()
   assert.equal(isAllowedOrigin(otherHost, { ALLOWED_ORIGINS: 'https://evil.test, https://app.test' }), true)
 })
 
+test('deriva chave HMAC estável do IP sem expor IP ou secret', async () => {
+  const request = new Request('https://pulso.test/ws', {
+    headers: { 'CF-Connecting-IP': '203.0.113.7' },
+  })
+  const env = { TURN_RATE_LIMIT_SECRET: 'segredo-de-teste-com-mais-de-32-caracteres' }
+  const first = await turnClientKey(request, env, 'pulso')
+  const repeated = await turnClientKey(request, env, 'pulso')
+  const otherWorkspace = await turnClientKey(request, env, 'outro')
+
+  assert.match(first, /^[a-z0-9_-]{43}$/i)
+  assert.equal(first, repeated)
+  assert.notEqual(first, otherWorkspace)
+  assert.equal(first.includes('203.0.113.7'), false)
+  assert.equal(first.includes(env.TURN_RATE_LIMIT_SECRET), false)
+  assert.equal(await turnClientKey(request, {}, 'pulso'), '')
+  assert.equal(await turnClientKey(request, { TURN_RATE_LIMIT_SECRET: 'curto' }, 'pulso'), '')
+})
+
 test('roteia WebSocket somente para o workspace configurado com hint sul-americano', async () => {
   const { env, calls } = testEnvironment()
   const request = new Request('https://pulso.test/ws', {
@@ -66,6 +90,36 @@ test('roteia WebSocket somente para o workspace configurado com hint sul-america
   assert.ok(calls.some((call) => call.operation === 'idFromName' && call.name === 'pulso'))
   assert.ok(calls.some((call) => call.operation === 'get'
     && call.id === 'id:pulso' && call.options.locationHint === 'sam'))
+})
+
+test('sobrescreve header interno com HMAC confiável e remove spoof sem secret', async () => {
+  const first = testEnvironment()
+  first.env.TURN_RATE_LIMIT_SECRET = 'segredo-de-teste-com-mais-de-32-caracteres'
+  await handleRequest(new Request('https://pulso.test/ws', {
+    headers: {
+      Origin: 'https://pulso.test',
+      Upgrade: 'websocket',
+      'CF-Connecting-IP': '2001:db8::7',
+      'X-Pulso-Turn-Client': 'valor-controlado-pelo-visitante',
+    },
+  }), first.env)
+  const forwarded = first.calls.find((call) => call.operation === 'fetch').request
+  const trustedKey = forwarded.headers.get('x-pulso-turn-client')
+  assert.match(trustedKey, /^[a-z0-9_-]{43}$/i)
+  assert.notEqual(trustedKey, 'valor-controlado-pelo-visitante')
+  assert.equal(trustedKey.includes('2001:db8::7'), false)
+
+  const second = testEnvironment()
+  await handleRequest(new Request('https://pulso.test/ws', {
+    headers: {
+      Origin: 'https://pulso.test',
+      Upgrade: 'websocket',
+      'CF-Connecting-IP': '203.0.113.9',
+      'X-Pulso-Turn-Client': 'spoof',
+    },
+  }), second.env)
+  const withoutSecret = second.calls.find((call) => call.operation === 'fetch').request
+  assert.equal(withoutSecret.headers.has('x-pulso-turn-client'), false)
 })
 
 test('rejeita origem inválida e serve assets sem invocar o Durable Object', async () => {

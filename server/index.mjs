@@ -17,7 +17,7 @@ const host = process.env.HOST || '127.0.0.1'
 const maxClients = Number(process.env.MAX_CLIENTS || 100)
 const cloudflareTurnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID || ''
 const cloudflareTurnApiToken = process.env.CLOUDFLARE_TURN_API_TOKEN || ''
-const cloudflareTurnTtl = Number(process.env.CLOUDFLARE_TURN_TTL || 3_600)
+const cloudflareTurnTtl = Number(process.env.CLOUDFLARE_TURN_TTL || 900)
 const MAX_RELAY_FRAME_LENGTH = 22_000
 const MAX_RELAY_BYTES_PER_WINDOW = 6 * 1024 * 1024
 // A 30 fps compatibility stream plus 4096-sample audio chunks produces about

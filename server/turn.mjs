@@ -2,9 +2,9 @@ const CLOUDFLARE_TURN_ENDPOINT = 'https://rtc.live.cloudflare.com/v1/turn/keys'
 const MIN_TTL_SECONDS = 600
 const MAX_TTL_SECONDS = 172_800
 
-function safeTurnTtl(value) {
+export function safeTurnTtl(value) {
   const parsed = Number(value)
-  if (!Number.isFinite(parsed)) return 3_600
+  if (!Number.isFinite(parsed)) return 900
   return Math.max(MIN_TTL_SECONDS, Math.min(MAX_TTL_SECONDS, Math.floor(parsed)))
 }
 
@@ -39,7 +39,7 @@ export function sanitizeIceServers(value) {
 export async function generateCloudflareIceServers({
   keyId,
   apiToken,
-  ttl = 3_600,
+  ttl = 900,
   fetchImpl = fetch,
 }) {
   if (!keyId || !apiToken) return null

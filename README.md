@@ -64,7 +64,7 @@ Ela usa por padrão 1 OCPU, 6 GB de RAM e boot de 50 GB. A aplicação fica prot
 
 A migração para Cloudflare está pronta em `cloudflare/` e `wrangler.jsonc`. O Worker entrega o build React com Static Assets e encaminha `/ws` para um Durable Object por workspace. O objeto usa WebSocket Hibernation, guarda o estado de cada conexão em attachments e persiste as últimas 100 mensagens por canal no storage SQLite.
 
-O protocolo do frontend não muda: `/ws` usa o workspace definido em `DEFAULT_WORKSPACE_ID`, inicialmente `pulso`. Como o MVP ainda não possui autenticação, outro valor em `?workspace=` é rejeitado antes de criar um Durable Object; isso impede que visitantes anônimos consumam storage criando workspaces arbitrários. Presença, chat, chamadas, offers/answers, ICE e o fallback reduzido mantêm os mesmos eventos do servidor Node.
+O protocolo do frontend não muda: `/ws` usa o workspace definido em `DEFAULT_WORKSPACE_ID`, inicialmente `pulso-publico`. Como o MVP ainda não possui autenticação, outro valor em `?workspace=` é rejeitado antes de criar um Durable Object; isso impede que visitantes anônimos consumam storage criando workspaces arbitrários. Presença, chat, chamadas, offers/answers, ICE e o fallback reduzido mantêm os mesmos eventos do servidor Node.
 
 O primeiro deploy pode ser feito sem TURN e usa apenas STUN/WebRTC direto. Para habilitar depois o Cloudflare Realtime TURN, cadastre as credenciais como secrets; elas nunca entram no bundle nem são enviadas ao navegador:
 

@@ -29,7 +29,7 @@
     }
   ],
   "vars": {
-    "DEFAULT_WORKSPACE_ID": "pulso",
+    "DEFAULT_WORKSPACE_ID": "pulso-publico",
     "MAX_CLIENTS_PER_WORKSPACE": "100",
     "CLOUDFLARE_TURN_TTL": "3600"
   },

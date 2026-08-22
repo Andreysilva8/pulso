@@ -1,4 +1,4 @@
-const PULSO_ORIGIN = 'https://pulso-9ojl.onrender.com'
+const PULSO_ORIGIN = 'https://pulso.carlosandreylc.workers.dev'
 const retryLink = document.querySelector('#retry-link')
 
 try {

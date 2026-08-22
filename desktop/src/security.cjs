@@ -1,4 +1,4 @@
-const PULSO_APP_URL = 'https://pulso-9ojl.onrender.com/'
+const PULSO_APP_URL = 'https://pulso.carlosandreylc.workers.dev/'
 const PULSO_APP_ORIGIN = new URL(PULSO_APP_URL).origin
 
 const ALLOWED_PERMISSIONS = new Set([

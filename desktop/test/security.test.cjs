@@ -11,9 +11,10 @@ const {
 
 test('aceita somente a origem oficial do Pulso', () => {
   assert.equal(isPulsoUrl(PULSO_APP_URL), true)
-  assert.equal(isPulsoUrl('https://pulso-9ojl.onrender.com/cafe?room=1'), true)
-  assert.equal(isPulsoUrl('https://pulso-9ojl.onrender.com.evil.test/'), false)
-  assert.equal(isPulsoUrl('http://pulso-9ojl.onrender.com/'), false)
+  assert.equal(isPulsoUrl('https://pulso.carlosandreylc.workers.dev/cafe?room=1'), true)
+  assert.equal(isPulsoUrl('https://pulso.carlosandreylc.workers.dev.evil.test/'), false)
+  assert.equal(isPulsoUrl('http://pulso.carlosandreylc.workers.dev/'), false)
+  assert.equal(isPulsoUrl('https://pulso-9ojl.onrender.com/'), false)
   assert.equal(isPulsoUrl('not-a-url'), false)
 })
 

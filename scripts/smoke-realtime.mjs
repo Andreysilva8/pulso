@@ -210,8 +210,10 @@ try {
   const pongCount = first.messages.filter((message) => message.type === 'pong').length
   first.socket.send(JSON.stringify({ type: 'ping', at: pingAt }))
   const pong = await waitFor(
-    () => first.messages.filter((message) => message.type === 'pong').length > pongCount
-      && [...first.messages].reverse().find((message) => message.type === 'pong'),
+    () => {
+      const pongs = first.messages.filter((message) => message.type === 'pong')
+      return pongs.length > pongCount ? pongs.at(-1) : false
+    },
     'socket continuar aberto sob a cadência do modo compatível',
   )
   assert.ok(pong.at >= pingAt)

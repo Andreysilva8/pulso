@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { WebSocket, WebSocketServer } from 'ws'
+import { isSiteOffline } from './offline.mjs'
 import { generateCloudflareIceServers } from './turn.mjs'
 
 const currentFile = fileURLToPath(import.meta.url)
@@ -15,6 +16,7 @@ const portArg = process.argv.find((value) => value.startsWith('--port='))
 const port = Number(portArg?.split('=')[1] || process.env.PORT || 4173)
 const host = process.env.HOST || '127.0.0.1'
 const maxClients = Number(process.env.MAX_CLIENTS || 100)
+const siteOffline = isSiteOffline()
 const cloudflareTurnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID || ''
 const cloudflareTurnApiToken = process.env.CLOUDFLARE_TURN_API_TOKEN || ''
 const cloudflareTurnTtl = Number(process.env.CLOUDFLARE_TURN_TTL || 900)
@@ -46,8 +48,18 @@ const app = express()
 app.disable('x-powered-by')
 
 app.get('/api/health', (_request, response) => {
-  response.json({ ok: true, service: 'pulso-signal', clients: clients.size })
+  response.json({ ok: true, service: 'pulso-signal', clients: clients.size, offline: siteOffline })
 })
+
+if (siteOffline) {
+  app.use((_request, response) => {
+    response
+      .status(503)
+      .set('Cache-Control', 'no-store')
+      .type('text')
+      .send('Pulso temporariamente fora do ar.')
+  })
+}
 
 if (fs.existsSync(distDir)) {
   app.use(express.static(distDir, { index: false }))
@@ -66,6 +78,11 @@ const socketServer = new WebSocketServer({
   path: '/ws',
   maxPayload: 160 * 1024,
   verifyClient: ({ origin, req }, done) => {
+    if (siteOffline) {
+      done(false, 503, 'Pulso temporariamente fora do ar.')
+      return
+    }
+
     let allowed = false
     if (allowedOrigins.size > 0) {
       allowed = Boolean(origin && allowedOrigins.has(origin))

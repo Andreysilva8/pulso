@@ -26,7 +26,7 @@ O servidor de produção usa `HOST=127.0.0.1` por padrão. Em container, defina 
 
 ## Aplicativo para Windows
 
-O pacote `desktop/` cria um aplicativo Windows separado que abre a versão publicada do Pulso em um Electron protegido. Ele oferece seletor próprio de tela/janela, áudio do computador com consentimento explícito, evita reduzir a atividade quando a janela é minimizada e começa em 720p/60 fps. A última qualidade escolhida também fica salva.
+O pacote `desktop/` cria um aplicativo Windows separado que abre a versão publicada do Pulso em um Electron protegido. Ele oferece seletor próprio de tela/janela, áudio do computador com consentimento explícito, evita reduzir a atividade quando a janela é minimizada e começa em 1080p/60 fps. A última qualidade escolhida também fica salva.
 
 ```bash
 npm run desktop:install
@@ -60,6 +60,33 @@ Há uma pilha Terraform pronta para uma VM ARM, rede restrita, Docker, Caddy e H
 
 Ela usa por padrão 1 OCPU, 6 GB de RAM e boot de 50 GB. A aplicação fica protegida por senha no Caddy e a porta 4173 não é exposta à internet. A criação dos recursos depende dos OCIDs, da home region, do seu IPv4 administrativo e da chave pública SSH da conta OCI.
 
+## Cloudflare Workers
+
+A migração para Cloudflare está pronta em `cloudflare/` e `wrangler.jsonc`. O Worker entrega o build React com Static Assets e encaminha `/ws` para um Durable Object por workspace. O objeto usa WebSocket Hibernation, guarda o estado de cada conexão em attachments e persiste as últimas 100 mensagens por canal no storage SQLite.
+
+O protocolo do frontend não muda: `/ws` usa o workspace definido em `DEFAULT_WORKSPACE_ID`, inicialmente `pulso`. Como o MVP ainda não possui autenticação, outro valor em `?workspace=` é rejeitado antes de criar um Durable Object; isso impede que visitantes anônimos consumam storage criando workspaces arbitrários. Presença, chat, chamadas, offers/answers, ICE e o fallback reduzido mantêm os mesmos eventos do servidor Node.
+
+O primeiro deploy pode ser feito sem TURN e usa apenas STUN/WebRTC direto. Para habilitar depois o Cloudflare Realtime TURN, cadastre as credenciais como secrets; elas nunca entram no bundle nem são enviadas ao navegador:
+
+```bash
+npx wrangler secret put CLOUDFLARE_TURN_KEY_ID
+npx wrangler secret put CLOUDFLARE_TURN_API_TOKEN
+```
+
+Depois valide e publique:
+
+```bash
+npm run cloudflare:test
+npm run cloudflare:typecheck
+npm run cloudflare:check
+npm run cloudflare:smoke
+npm run cloudflare:deploy
+```
+
+Para desenvolvimento local, use `npm run cloudflare:dev`. O TTL padrão do TURN é 3.600 segundos; durante uma chamada, o heartbeat JSON que o cliente já envia renova a credencial aos 75% do TTL sem manter o Durable Object acordado com timers.
+
+O caminho de 1080p/60 fps continua sendo a trilha WebRTC direta ou assistida por TURN. O Worker não transforma quadros base64 em vídeo: o fallback continua intencionalmente limitado a 854×480 e até 30 fps, com descarte sob congestionamento. Isso protege a fluidez, a franquia gratuita e o limite diário de mensagens do Durable Object.
+
 ## O que está implementado
 
 - canais de texto com histórico em memória e indicador de digitação;
@@ -67,7 +94,7 @@ Ela usa por padrão 1 OCPU, 6 GB de RAM e boot de 50 GB. A aplicação fica prot
 - salas de voz com múltiplos participantes em malha P2P;
 - áudio, vídeo, mute e câmera on/off;
 - compartilhamento de tela com perfis selecionáveis de 480p, 720p ou 1080p e 15, 30 ou 60 fps; o padrão é 1080p/60 fps, com bitrate adaptado à quantidade de espectadores;
-- aplicativo Windows com perfil inicial 720p/60, seletor explícito de tela/janela e áudio loopback protegido;
+- aplicativo Windows com perfil inicial 1080p/60, seletor explícito de tela/janela e áudio loopback protegido;
 - telemetria durante a transmissão com FPS realmente codificado por espectador e bitrate total enviado;
 - detecção de falha real da trilha WebRTC sem confundir uma tela estática com congelamento, e modo compatível adaptativo de tela/áudio em até 854×480/30 fps, ativado sob demanda somente para o espectador afetado;
 - áudio de aba, janela e tela inteira quando o navegador confirma o filtro antieco; áudio de sistema sem esse filtro é bloqueado antes de chegar ao WebRTC/relay;
@@ -105,6 +132,13 @@ Node.js + Express + ws
 ├── presença e salas ativas
 ├── relay de offers, answers e ICE candidates
 └── fallback temporário de quadros da tela e áudio PCM
+
+Cloudflare Workers (opção de produção)
+├── Static Assets para o build React
+├── Worker para origem, health e roteamento por workspace
+├── Durable Object com WebSocket Hibernation
+├── SQLite para histórico curto de chat
+└── Cloudflare Realtime TURN opcional, com credenciais temporárias
 ```
 
 ## Limites do MVP e produção
@@ -118,6 +152,8 @@ Node.js + Express + ws
 - Quando o vídeo direto ainda não entregou quadros, o modo compatível usa até 854×480 e tenta até 30 fps com quadros menores e descarte sob congestionamento. Ele evita a tela presa em “Conectando”, mas a cópia reduzida passa pelo servidor e não substitui TURN/SFU em produção.
 - Em Chrome 141 ou posterior, “Tela inteira” pode transmitir áudio com `restrictOwnAudio`; marque “Compartilhar áudio”. Em navegadores que não confirmam essa proteção, o Pulso mantém o vídeo mas bloqueia o áudio do sistema para impedir retorno infinito.
 - A integração segura com Cloudflare Realtime TURN acompanha o repositório; o relay TURN é um serviço externo e precisa das duas variáveis secretas no Render.
+- No deploy Cloudflare, as mesmas credenciais são cadastradas com `wrangler secret put`. Static Assets é gratuito e ilimitado, mas Workers, Durable Objects e Realtime têm franquias; ultrapassar esses limites não faz 1080p/60 virar um relay WebSocket viável.
+- Durable Objects usam localização stateful própria. O hint `sam` já está configurado, mas é apenas uma preferência da plataforma e não uma garantia de que o objeto da sala execute fisicamente no Brasil. A mídia WebRTC direta não passa pelo Durable Object.
 
 ## Scripts
 
@@ -126,5 +162,11 @@ Node.js + Express + ws
 - `npm start` — servidor de produção na porta 4173;
 - `npm test` — testes unitários e de tempo real;
 - `npm run test:realtime` — somente o smoke test WebSocket.
+- `npm run cloudflare:test` — testes locais do router e do Durable Object;
+- `npm run cloudflare:typecheck` — verifica os tipos específicos do runtime Workers;
+- `npm run cloudflare:check` — build e empacotamento Wrangler sem publicar;
+- `npm run cloudflare:smoke` — inicia o runtime local real e valida assets, origem, chat, signaling e fallback;
+- `npm run cloudflare:dev` — build e ambiente Cloudflare local;
+- `npm run cloudflare:deploy` — build e publicação no Workers;
 - `npm run desktop:smoke` — valida o aplicativo contra a publicação do Render;
 - `npm run desktop:make` — testa e gera o instalador do Windows.

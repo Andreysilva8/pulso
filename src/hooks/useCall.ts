@@ -22,6 +22,7 @@ import {
   startScreenRelay,
   type ScreenRelayController,
 } from '../lib/screenRelay'
+import { relayAudioQueueIsFull } from '../lib/screenRelayFlow'
 import {
   aggregateScreenShareSendTelemetry,
   sampleScreenShareSenderStats,
@@ -308,7 +309,9 @@ export function useCall({
     const source = context.createBufferSource()
     source.buffer = buffer
     source.connect(player.gain)
-    if (player.nextPlaybackTime > context.currentTime + 0.5) player.nextPlaybackTime = context.currentTime + 0.04
+    // Prefer a short gap over replaying stale screen audio. This relay is an
+    // emergency fallback; queued PCM must never grow into seconds of delay.
+    if (relayAudioQueueIsFull(player.nextPlaybackTime, context.currentTime)) return
     const startAt = Math.max(context.currentTime + 0.04, player.nextPlaybackTime)
     source.start(startAt)
     player.nextPlaybackTime = startAt + buffer.duration

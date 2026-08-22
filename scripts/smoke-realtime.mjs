@@ -207,11 +207,14 @@ try {
     }))
   }
   const pingAt = Date.now()
+  const pongCount = first.messages.filter((message) => message.type === 'pong').length
   first.socket.send(JSON.stringify({ type: 'ping', at: pingAt }))
-  await waitFor(
-    () => first.messages.find((message) => message.type === 'pong' && message.at === pingAt),
+  const pong = await waitFor(
+    () => first.messages.filter((message) => message.type === 'pong').length > pongCount
+      && [...first.messages].reverse().find((message) => message.type === 'pong'),
     'socket continuar aberto sob a cadência do modo compatível',
   )
+  assert.ok(pong.at >= pingAt)
 
   second.socket.send(JSON.stringify({ type: 'call:screen-relay-release', target: first.id }))
   await waitFor(

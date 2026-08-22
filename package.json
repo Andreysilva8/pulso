@@ -9,10 +9,16 @@
   "scripts": {
     "dev": "concurrently -n web,signal -c cyan,magenta \"vite --host 0.0.0.0\" \"node --watch server/index.mjs --port=8787\"",
     "build": "tsc -b && vite build",
-    "test": "vitest run src && node --test server/*.test.mjs && node scripts/smoke-realtime.mjs",
+    "test": "vitest run src && node --test server/*.test.mjs cloudflare/*.test.mjs && node scripts/smoke-realtime.mjs",
     "test:unit": "vitest run src",
     "test:realtime": "node scripts/smoke-realtime.mjs",
     "test:server": "node --test server/*.test.mjs",
+    "cloudflare:dev": "npm run build && wrangler dev",
+    "cloudflare:test": "node --test cloudflare/*.test.mjs",
+    "cloudflare:typecheck": "tsc -p tsconfig.cloudflare.json",
+    "cloudflare:check": "npm run build && npm run cloudflare:typecheck && wrangler deploy --dry-run",
+    "cloudflare:smoke": "npm run build && node cloudflare/smoke.mjs",
+    "cloudflare:deploy": "npm run build && wrangler deploy",
     "desktop:install": "npm --prefix desktop install",
     "desktop:start": "npm --prefix desktop start",
     "desktop:smoke": "npm --prefix desktop run smoke",
@@ -35,10 +41,12 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/ws": "^8.18.1",
+    "@cloudflare/workers-types": "5.20260821.1",
     "@vitejs/plugin-react": "^6.0.5",
     "concurrently": "^10.0.5",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "wrangler": "4.125.0"
   }
 }

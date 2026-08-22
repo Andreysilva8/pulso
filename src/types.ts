@@ -51,8 +51,8 @@ export type CallEvent =
   | { type: 'call:peers'; channelId: string; peers: CallParticipant[] }
   | { type: 'call:peer-left'; channelId: string; peerId: string }
   | { type: 'call:signal'; channelId: string; from: string; payload: SignalPayload }
-  | { type: 'call:screen-frame'; channelId: string; from: string; dataUrl: string; frameRate: number }
-  | { type: 'call:screen-audio'; channelId: string; from: string; pcm: string; sampleRate: number; sequence: number }
+  | { type: 'call:screen-frame'; channelId: string; from: string; dataUrl: string; frameRate: number; relayId?: number }
+  | { type: 'call:screen-audio'; channelId: string; from: string; pcm: string; sampleRate: number; sequence: number; relayId?: number }
   | { type: 'call:screen-stop'; channelId: string; from: string }
   | { type: 'call:screen-relay-request'; channelId: string; from: string }
   | { type: 'call:screen-relay-release'; channelId: string; from: string }

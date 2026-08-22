@@ -1,6 +1,7 @@
 node_modules/
 desktop/node_modules/
 dist/
+.wrangler/
 release/
 infra/
 *.tsbuildinfo
@@ -8,3 +9,4 @@ infra/
 .env
 .env.*
 !.env.example
+.dev.vars*

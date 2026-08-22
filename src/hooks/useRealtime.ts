@@ -10,6 +10,7 @@ import type {
   SignalPayload,
 } from '../types'
 import { configuredIceServers, sanitizeIceServers } from '../lib/iceServers'
+import { screenRelayAckFor } from '../lib/screenRelayFlow'
 
 type CallListener = (event: CallEvent) => void
 const MAX_MEDIA_SOCKET_BUFFER = 256 * 1024
@@ -90,6 +91,9 @@ export function useRealtime(initialProfile: Profile, activeChannelId: string) {
         } catch {
           return
         }
+
+        const relayAck = screenRelayAckFor(message)
+        if (relayAck) send(relayAck)
 
         switch (message.type) {
           case 'session:ready':
@@ -192,7 +196,7 @@ export function useRealtime(initialProfile: Profile, activeChannelId: string) {
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [])
+  }, [send])
 
   useEffect(() => {
     activeChannelRef.current = activeChannelId

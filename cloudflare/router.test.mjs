@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   handleRequest,
   isAllowedOrigin,
+  isSiteOffline,
   requestedWorkspaceId,
   safeWorkspaceId,
   turnClientKey,
@@ -60,6 +61,23 @@ test('origem é same-host por padrão ou allowlist exata quando configurada', ()
   assert.equal(isAllowedOrigin(sameHost, {}), true)
   assert.equal(isAllowedOrigin(otherHost, {}), false)
   assert.equal(isAllowedOrigin(otherHost, { ALLOWED_ORIGINS: 'https://evil.test, https://app.test' }), true)
+})
+
+test('modo offline bloqueia assets, API e WebSocket sem tocar no workspace', async () => {
+  const { env, calls } = testEnvironment()
+  env.SITE_OFFLINE = 'true'
+  assert.equal(isSiteOffline(env), true)
+
+  for (const path of ['/', '/api/health', '/ws']) {
+    const response = await handleRequest(new Request(`https://pulso.test${path}`, {
+      headers: path === '/ws' ? { Origin: 'https://pulso.test', Upgrade: 'websocket' } : undefined,
+    }), env)
+    assert.equal(response.status, 503)
+    assert.equal(response.headers.get('Cache-Control'), 'no-store')
+    assert.equal(await response.text(), 'Pulso temporariamente fora do ar.')
+  }
+
+  assert.equal(calls.length, 0)
 })
 
 test('deriva chave HMAC estável do IP sem expor IP ou secret', async () => {

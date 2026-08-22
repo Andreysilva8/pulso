@@ -7,10 +7,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": [
-      "/api/*",
-      "/ws*"
-    ]
+    "run_worker_first": true
   },
   "durable_objects": {
     "bindings": [
@@ -29,6 +26,7 @@
     }
   ],
   "vars": {
+    "SITE_OFFLINE": "true",
     "DEFAULT_WORKSPACE_ID": "pulso-publico",
     "MAX_CLIENTS_PER_WORKSPACE": "100",
     "CLOUDFLARE_TURN_TTL": "900",

@@ -6,6 +6,7 @@ export interface Env {
   ASSETS: Fetcher
   WORKSPACES: DurableObjectNamespace
   ALLOWED_ORIGINS?: string
+  SITE_OFFLINE?: string
   DEFAULT_WORKSPACE_ID?: string
   MAX_CLIENTS_PER_WORKSPACE?: string
   CLOUDFLARE_TURN_KEY_ID?: string

@@ -2,6 +2,20 @@ const DEFAULT_WORKSPACE_ID = 'pulso'
 const INTERNAL_TURN_CLIENT_HEADER = 'x-pulso-turn-client'
 const MIN_RATE_LIMIT_SECRET_LENGTH = 32
 
+export function isSiteOffline(env) {
+  return String(env.SITE_OFFLINE || '').trim().toLowerCase() === 'true'
+}
+
+function offlineResponse() {
+  return new Response('Pulso temporariamente fora do ar.', {
+    status: 503,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+  })
+}
+
 function bytesToBase64Url(value) {
   let binary = ''
   for (const byte of new Uint8Array(value)) binary += String.fromCharCode(byte)
@@ -74,6 +88,8 @@ function workspaceStub(env, workspaceId) {
 }
 
 export async function handleRequest(request, env) {
+  if (isSiteOffline(env)) return offlineResponse()
+
   const url = new URL(request.url)
   const { workspaceId, valid } = requestedWorkspaceId(url, env)
 

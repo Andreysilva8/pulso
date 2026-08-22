@@ -36,7 +36,7 @@ npm run desktop:make
 
 O instalador é gerado em `release/Pulso-Desktop-Setup-0.2.0.exe`. Ele ainda não possui assinatura de código, então versões de teste podem exibir um aviso do Windows SmartScreen.
 
-O aplicativo melhora o controle da captura e a estabilidade no Windows, mas 60 fps continua sendo um alvo: CPU, upload, quantidade de espectadores e o caminho de rede definem a taxa efetiva. O banner da transmissão mostra o FPS realmente codificado e o bitrate total. Se surgir `Compatível · 12 fps`, a conexão direta falhou e o ganho estrutural necessário é TURN/SFU, não um computador mais rápido.
+O aplicativo melhora o controle da captura e a estabilidade no Windows, mas 60 fps continua sendo um alvo: CPU, upload, quantidade de espectadores e o caminho de rede definem a taxa efetiva. O banner da transmissão mostra o FPS realmente codificado e o bitrate total. Se surgir `Compatível · limite 30 fps`, a conexão direta falhou; configure o TURN temporário para recuperar o caminho WebRTC.
 
 ## Publicação temporária por 10 horas
 
@@ -66,10 +66,10 @@ Ela usa por padrão 1 OCPU, 6 GB de RAM e boot de 50 GB. A aplicação fica prot
 - presença online e perfil local editável;
 - salas de voz com múltiplos participantes em malha P2P;
 - áudio, vídeo, mute e câmera on/off;
-- compartilhamento de tela com perfis selecionáveis de 480p, 720p ou 1080p e 15, 30 ou 60 fps; o padrão é 720p/30 fps para reduzir travamentos, com bitrate adaptado à quantidade de espectadores;
+- compartilhamento de tela com perfis selecionáveis de 480p, 720p ou 1080p e 15, 30 ou 60 fps; o padrão é 1080p/60 fps, com bitrate adaptado à quantidade de espectadores;
 - aplicativo Windows com perfil inicial 720p/60, seletor explícito de tela/janela e áudio loopback protegido;
 - telemetria durante a transmissão com FPS realmente codificado por espectador e bitrate total enviado;
-- detecção de falha real da trilha WebRTC sem confundir uma tela estática com congelamento, e modo compatível de tela/áudio em até 960×540/12 fps, ativado sob demanda somente para o espectador afetado;
+- detecção de falha real da trilha WebRTC sem confundir uma tela estática com congelamento, e modo compatível adaptativo de tela/áudio em até 854×480/30 fps, ativado sob demanda somente para o espectador afetado;
 - áudio de aba, janela e tela inteira quando o navegador confirma o filtro antieco; áudio de sistema sem esse filtro é bloqueado antes de chegar ao WebRTC/relay;
 - câmera desligada por padrão, adquirida somente após clique explícito e completamente liberada ao desligar;
 - seleção e troca de microfone durante a chamada, sem desconectar o participante;
@@ -114,10 +114,10 @@ Node.js + Express + ws
 - Não há autenticação. Antes de publicar, adicione contas, autorização por comunidade e proteção contra abuso.
 - A receita OCI ativa uma senha HTTP no Caddy para não deixar esta demo aberta enquanto contas ainda não existem.
 - A chamada usa malha P2P, ideal para aproximadamente 2–4 pessoas. Salas maiores devem usar um SFU, como LiveKit, mediasoup ou Janus.
-- O STUN padrão não atravessa todas as redes. Produção precisa de TURN com credenciais temporárias. Copie `.env.example` para `.env` e configure `VITE_ICE_SERVERS`.
-- Quando o vídeo direto ainda não entregou quadros, o modo compatível usa até 960×540 a no máximo 12 fps. Ele evita a tela presa em “Conectando”, mas a cópia reduzida passa pelo servidor e não substitui TURN/SFU em produção.
+- O STUN padrão não atravessa todas as redes. Em produção, configure `CLOUDFLARE_TURN_KEY_ID` e `CLOUDFLARE_TURN_API_TOKEN` somente no servidor; o Pulso gera credenciais temporárias e as entrega apenas ao participante depois que ele entra em uma chamada. `VITE_ICE_SERVERS` fica disponível apenas para ambientes de teste ou outro provedor compatível.
+- Quando o vídeo direto ainda não entregou quadros, o modo compatível usa até 854×480 e tenta até 30 fps com quadros menores e descarte sob congestionamento. Ele evita a tela presa em “Conectando”, mas a cópia reduzida passa pelo servidor e não substitui TURN/SFU em produção.
 - Em Chrome 141 ou posterior, “Tela inteira” pode transmitir áudio com `restrictOwnAudio`; marque “Compartilhar áudio”. Em navegadores que não confirmam essa proteção, o Pulso mantém o vídeo mas bloqueia o áudio do sistema para impedir retorno infinito.
-- O servidor TURN não acompanha este repositório.
+- A integração segura com Cloudflare Realtime TURN acompanha o repositório; o relay TURN é um serviço externo e precisa das duas variáveis secretas no Render.
 
 ## Scripts
 

@@ -19,25 +19,25 @@ import {
 } from './screenShare'
 
 describe('screen-share quality profile', () => {
-  it('defaults to the stable 720p at 30 frames per second profile', () => {
-    expect(SCREEN_SHARE_WIDTH).toBe(1280)
-    expect(SCREEN_SHARE_HEIGHT).toBe(720)
-    expect(SCREEN_SHARE_FRAME_RATE).toBe(30)
+  it('defaults to the high-quality 1080p at 60 frames per second profile', () => {
+    expect(SCREEN_SHARE_WIDTH).toBe(1920)
+    expect(SCREEN_SHARE_HEIGHT).toBe(1080)
+    expect(SCREEN_SHARE_FRAME_RATE).toBe(60)
     expect(SCREEN_SHARE_VIDEO_CONSTRAINTS).toMatchObject({
-      width: { ideal: 1280, max: 1280 },
-      height: { ideal: 720, max: 720 },
-      frameRate: { ideal: 30, max: 30 },
+      width: { ideal: 1920, max: 1920 },
+      height: { ideal: 1080, max: 1080 },
+      frameRate: { ideal: 60, max: 60 },
     })
-    expect(SCREEN_SHARE_MAX_BITRATE).toBe(3_000_000)
+    expect(SCREEN_SHARE_MAX_BITRATE).toBe(8_000_000)
   })
 
-  it('starts the Windows desktop app at 720p60 and keeps the browser at 720p30', () => {
+  it('starts both the Windows desktop app and browser at 1080p60', () => {
     expect(preferredScreenShareSettings('Mozilla/5.0 Electron/43.4.1')).toEqual(
       DESKTOP_SCREEN_SHARE_SETTINGS,
     )
     expect(preferredScreenShareSettings('Mozilla/5.0 Chrome/140.0')).toEqual({
-      resolution: 720,
-      frameRate: 30,
+      resolution: 1080,
+      frameRate: 60,
     })
   })
 
@@ -57,7 +57,7 @@ describe('screen-share quality profile', () => {
   it('ignores malformed saved quality and uses the platform recommendation', () => {
     const storage = { getItem: () => '{"resolution":999,"frameRate":75}' }
     expect(loadScreenShareSettings(storage, 'Electron/43.4.1')).toEqual({
-      resolution: 720,
+      resolution: 1080,
       frameRate: 60,
     })
   })
@@ -231,7 +231,7 @@ describe('screen-share quality profile', () => {
     expect(removeTrack).toHaveBeenCalledWith(audioTrack)
   })
 
-  it('uses a balanced sender for the stable default profile', async () => {
+  it('prioritizes frame rate for the default 1080p60 profile', async () => {
     const parameters: RTCRtpSendParameters = {
       codecs: [],
       encodings: [{}],
@@ -243,10 +243,10 @@ describe('screen-share quality profile', () => {
     const sender = { getParameters: () => parameters, setParameters } as unknown as RTCRtpSender
 
     await expect(configureScreenSender(sender)).resolves.toBe(true)
-    expect(parameters.degradationPreference).toBe('balanced')
+    expect(parameters.degradationPreference).toBe('maintain-framerate')
     expect(parameters.encodings[0]).toMatchObject({
-      maxBitrate: 3_000_000,
-      maxFramerate: 30,
+      maxBitrate: 8_000_000,
+      maxFramerate: 60,
       scaleResolutionDownBy: 1,
       priority: 'high',
       networkPriority: 'high',

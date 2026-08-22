@@ -1,8 +1,8 @@
-export const SCREEN_RELAY_FRAME_RATE = 12
+export const SCREEN_RELAY_FRAME_RATE = 30
 export const SCREEN_RELAY_FRAME_INTERVAL = 1_000 / SCREEN_RELAY_FRAME_RATE
-export const SCREEN_RELAY_MAX_WIDTH = 960
-export const SCREEN_RELAY_MAX_HEIGHT = 540
-export const SCREEN_RELAY_MAX_DATA_URL_LENGTH = 42_000
+export const SCREEN_RELAY_MAX_WIDTH = 854
+export const SCREEN_RELAY_MAX_HEIGHT = 480
+export const SCREEN_RELAY_MAX_DATA_URL_LENGTH = 18_000
 export const SCREEN_RELAY_AUDIO_SAMPLE_RATE = 16_000
 
 export type ScreenRelayController = {
@@ -11,7 +11,7 @@ export type ScreenRelayController = {
 }
 
 export type ScreenRelayHandlers = {
-  sendFrame: (dataUrl: string) => void
+  sendFrame: (dataUrl: string, frameRate: number) => void
   sendAudio: (pcmBase64: string, sampleRate: number, sequence: number) => void
 }
 
@@ -159,7 +159,7 @@ export async function startScreenRelay(
       if (dataUrl && (dataUrl !== lastFrame || now - lastFrameSentAt >= 1_000)) {
         lastFrame = dataUrl
         lastFrameSentAt = now
-        handlers.sendFrame(dataUrl)
+        handlers.sendFrame(dataUrl, frameRate)
       }
     } finally {
       const remaining = Math.max(0, frameInterval - (performance.now() - startedAt))

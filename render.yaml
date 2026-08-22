@@ -9,3 +9,9 @@ services:
     envVars:
       - key: HOST
         value: 0.0.0.0
+      - key: CLOUDFLARE_TURN_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_TURN_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_TURN_TTL
+        value: 3600

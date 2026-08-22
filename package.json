@@ -9,9 +9,10 @@
   "scripts": {
     "dev": "concurrently -n web,signal -c cyan,magenta \"vite --host 0.0.0.0\" \"node --watch server/index.mjs --port=8787\"",
     "build": "tsc -b && vite build",
-    "test": "vitest run src && node scripts/smoke-realtime.mjs",
+    "test": "vitest run src && node --test server/*.test.mjs && node scripts/smoke-realtime.mjs",
     "test:unit": "vitest run src",
     "test:realtime": "node scripts/smoke-realtime.mjs",
+    "test:server": "node --test server/*.test.mjs",
     "desktop:install": "npm --prefix desktop install",
     "desktop:start": "npm --prefix desktop start",
     "desktop:smoke": "npm --prefix desktop run smoke",

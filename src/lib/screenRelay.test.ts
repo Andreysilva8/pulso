@@ -9,8 +9,8 @@ import {
 
 describe('screen relay audio', () => {
   it('keeps compatibility video responsive and within the server budget', () => {
-    expect(SCREEN_RELAY_FRAME_RATE).toBe(12)
-    expect(SCREEN_RELAY_MAX_DATA_URL_LENGTH).toBeLessThanOrEqual(42_000)
+    expect(SCREEN_RELAY_FRAME_RATE).toBe(30)
+    expect(SCREEN_RELAY_MAX_DATA_URL_LENGTH).toBeLessThanOrEqual(18_000)
   })
 
   it('downsamples and mixes stereo audio into 16 kHz mono PCM', () => {

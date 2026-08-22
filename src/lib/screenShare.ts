@@ -15,16 +15,18 @@ export const SCREEN_SHARE_RESOLUTION_OPTIONS = [
 export const SCREEN_SHARE_FRAME_RATE_OPTIONS = [15, 30, 60] as const
 
 export const DEFAULT_SCREEN_SHARE_SETTINGS: ScreenShareSettings = {
-  resolution: 720,
-  frameRate: 30,
-}
-
-export const DESKTOP_SCREEN_SHARE_SETTINGS: ScreenShareSettings = {
-  resolution: 720,
+  resolution: 1080,
   frameRate: 60,
 }
 
-export const SCREEN_SHARE_SETTINGS_STORAGE_KEY = 'pulso:screen-share-settings'
+export const DESKTOP_SCREEN_SHARE_SETTINGS: ScreenShareSettings = {
+  resolution: 1080,
+  frameRate: 60,
+}
+
+// Bump the key when changing the product default so an old implicit 720p30
+// preference does not silently keep existing users on the previous target.
+export const SCREEN_SHARE_SETTINGS_STORAGE_KEY = 'pulso:screen-share-settings:v3'
 
 export function isPulsoDesktop(
   userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent,

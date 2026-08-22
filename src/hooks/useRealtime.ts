@@ -9,6 +9,7 @@ import type {
   RealtimeStatus,
   SignalPayload,
 } from '../types'
+import { configuredIceServers, sanitizeIceServers } from '../lib/iceServers'
 
 type CallListener = (event: CallEvent) => void
 const MAX_MEDIA_SOCKET_BUFFER = 256 * 1024
@@ -22,6 +23,10 @@ function socketUrl() {
 export function useRealtime(initialProfile: Profile, activeChannelId: string) {
   const [status, setStatus] = useState<RealtimeStatus>('connecting')
   const [clientId, setClientId] = useState('')
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>(() => configuredIceServers(
+    import.meta.env.VITE_ICE_SERVERS,
+    import.meta.env.VITE_STUN_URL,
+  ))
   const [members, setMembers] = useState<PresenceMember[]>([])
   const [callsByChannel, setCallsByChannel] = useState<Record<string, CallParticipant[]>>({})
   const [messagesByChannel, setMessagesByChannel] = useState<Record<string, ChatMessage[]>>({})
@@ -90,6 +95,12 @@ export function useRealtime(initialProfile: Profile, activeChannelId: string) {
           case 'session:ready':
             setClientId(message.clientId)
             break
+
+          case 'session:ice-servers': {
+            const nextIceServers = sanitizeIceServers(message.iceServers)
+            if (nextIceServers.length) setIceServers(nextIceServers)
+            break
+          }
 
           case 'workspace:state':
             setClientId(message.clientId)
@@ -222,8 +233,8 @@ export function useRealtime(initialProfile: Profile, activeChannelId: string) {
     send({ type: 'call:signal', target, payload })
   }, [send])
 
-  const sendScreenFrame = useCallback((dataUrl: string, targets: string[]) => {
-    send({ type: 'call:screen-frame', dataUrl, targets }, true)
+  const sendScreenFrame = useCallback((dataUrl: string, frameRate: number, targets: string[]) => {
+    send({ type: 'call:screen-frame', dataUrl, frameRate, targets }, true)
   }, [send])
 
   const sendScreenAudio = useCallback((pcm: string, sampleRate: number, sequence: number, targets: string[]) => {
@@ -245,6 +256,7 @@ export function useRealtime(initialProfile: Profile, activeChannelId: string) {
   return {
     status,
     clientId,
+    iceServers,
     members,
     callsByChannel,
     messagesByChannel,

@@ -11,7 +11,6 @@ import { createPortal } from 'react-dom'
 import type { LucideIcon } from 'lucide-react'
 import { LoaderCircle, MicOff, MonitorUp, Radio, Volume2, VolumeX, WifiOff } from 'lucide-react'
 import type { CallParticipant, Profile, ScreenRelayFrame } from '../types'
-import { SCREEN_RELAY_FRAME_RATE } from '../lib/screenRelay'
 
 const VOLUME_CONTROLS_IDLE_MS = 2_500
 
@@ -581,7 +580,7 @@ export function ParticipantTile({
           <span className="media-chip media-chip--screen"><MonitorUp size={13} /> Transmitindo</span>
         )}
         {visibleFallback && (
-          <span className="media-chip media-chip--relay"><Radio size={13} /> Compatível · {SCREEN_RELAY_FRAME_RATE} fps</span>
+          <span className="media-chip media-chip--relay"><Radio size={13} /> Compatível · limite {fallbackFrame?.frameRate || 30} fps</span>
         )}
         {participant.media.screen && (
           <span className={`media-chip ${participant.media.screenAudio ? 'media-chip--audio' : 'media-chip--muted-audio'}`}>

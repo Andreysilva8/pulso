@@ -29,6 +29,7 @@ import {
   type ScreenShareSenderStatsSample,
   type ScreenShareSenderStatsSnapshot,
 } from '../lib/screenShareTelemetry'
+import { configuredIceServers, rtcConfigurationFor } from '../lib/iceServers'
 
 type CallStatus = 'idle' | 'preview' | 'joining' | 'joined'
 
@@ -61,37 +62,16 @@ type RelayAudioPlayer = {
 
 type UseCallOptions = {
   clientId: string
+  iceServers: RTCIceServer[]
   realtimeStatus: RealtimeStatus
   subscribeToCallEvents: (listener: (event: CallEvent) => void) => () => void
   joinRealtimeCall: (channelId: string, media: MediaState) => void
   leaveRealtimeCall: () => void
   updateRealtimeCall: (media: MediaState) => void
   sendSignal: (target: string, payload: SignalPayload) => void
-  sendScreenFrame: (dataUrl: string, targets: string[]) => void
+  sendScreenFrame: (dataUrl: string, frameRate: number, targets: string[]) => void
   sendScreenAudio: (pcm: string, sampleRate: number, sequence: number, targets: string[]) => void
   notifyScreenRelayStop: () => void
-}
-
-function configuredIceServers(): RTCIceServer[] {
-  const serialized = import.meta.env.VITE_ICE_SERVERS
-  if (serialized) {
-    try {
-      const parsed = JSON.parse(serialized)
-      if (Array.isArray(parsed) && parsed.length) return parsed
-    } catch {
-      console.warn('VITE_ICE_SERVERS inválido; usando o servidor STUN padrão.')
-    }
-  }
-  return [
-    { urls: import.meta.env.VITE_STUN_URL || 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:stun.l.google.com:19302' },
-  ]
-}
-
-const rtcConfiguration: RTCConfiguration = {
-  iceServers: configuredIceServers(),
-  bundlePolicy: 'max-bundle',
-  iceCandidatePoolSize: 8,
 }
 
 function describeMediaError(error: unknown) {
@@ -135,6 +115,7 @@ export function releaseCameraTracks(stream: MediaStream | null) {
 
 export function useCall({
   clientId,
+  iceServers,
   realtimeStatus,
   subscribeToCallEvents,
   joinRealtimeCall,
@@ -171,10 +152,14 @@ export function useCall({
   const [cameraSwitching, setCameraSwitching] = useState(false)
   const [mediaPreparing, setMediaPreparing] = useState(false)
   const [screenShareStarting, setScreenShareStarting] = useState(false)
-  const [fallbackFrames, setFallbackFrames] = useState<Map<string, { dataUrl: string; receivedAt: number }>>(new Map())
+  const [fallbackFrames, setFallbackFrames] = useState<Map<string, { dataUrl: string; receivedAt: number; frameRate: number }>>(new Map())
   const [relayAudioBlocked, setRelayAudioBlocked] = useState<Map<string, boolean>>(new Map())
 
   const peerRecordsRef = useRef(new Map<string, PeerRecord>())
+  const iceServersRef = useRef<RTCIceServer[]>(
+    iceServers.length ? iceServers : configuredIceServers(),
+  )
+  const iceServersFingerprintRef = useRef(JSON.stringify(iceServersRef.current))
   const localStreamRef = useRef<MediaStream | null>(null)
   const screenStreamRef = useRef<MediaStream | null>(null)
   const channelIdRef = useRef<string | null>(null)
@@ -400,9 +385,9 @@ export function useCall({
       try {
         const relayProfile = screenShareProfile(screenShareSettingsRef.current)
         const controller = await startScreenRelay(stream, {
-          sendFrame: (dataUrl) => {
+          sendFrame: (dataUrl, frameRate) => {
             const targets = [...screenRelaySubscribersRef.current]
-            if (targets.length) sendScreenFrame(dataUrl, targets)
+            if (targets.length) sendScreenFrame(dataUrl, frameRate, targets)
           },
           sendAudio: (pcm, sampleRate, sequence) => {
             const targets = [...screenRelaySubscribersRef.current]
@@ -479,7 +464,7 @@ export function useCall({
     const existing = peerRecordsRef.current.get(peerId)
     if (existing) return existing
 
-    const pc = new RTCPeerConnection(rtcConfiguration)
+    const pc = new RTCPeerConnection(rtcConfigurationFor(iceServersRef.current))
     const microphoneTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' })
     const screenAudioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' })
     const videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' })
@@ -599,6 +584,26 @@ export function useCall({
     makeOfferRef.current = makeOffer
   }, [makeOffer])
 
+  useEffect(() => {
+    if (!iceServers.length) return
+    const fingerprint = JSON.stringify(iceServers)
+    if (fingerprint === iceServersFingerprintRef.current) return
+    iceServersFingerprintRef.current = fingerprint
+    iceServersRef.current = iceServers
+
+    for (const [peerId, record] of peerRecordsRef.current) {
+      try {
+        record.pc.setConfiguration(rtcConfigurationFor(iceServers))
+        if (record.pc.connectionState !== 'connected' && record.pc.connectionState !== 'closed') {
+          record.restartRequested = true
+          void makeOfferRef.current(peerId, record, true)
+        }
+      } catch (error) {
+        console.warn('Não foi possível atualizar a rota TURN desta conexão.', error)
+      }
+    }
+  }, [iceServers])
+
   const handleSignal = useCallback(async (peerId: string, payload: SignalPayload) => {
     const record = ensurePeer(peerId)
     const { pc } = record
@@ -654,7 +659,11 @@ export function useCall({
       void handleSignal(event.from, event.payload)
     } else if (event.type === 'call:screen-frame') {
       const receivedAt = Date.now()
-      setFallbackFrames((current) => new Map(current).set(event.from, { dataUrl: event.dataUrl, receivedAt }))
+      setFallbackFrames((current) => new Map(current).set(event.from, {
+        dataUrl: event.dataUrl,
+        receivedAt,
+        frameRate: event.frameRate,
+      }))
       const previousTimer = fallbackFrameTimersRef.current.get(event.from)
       if (previousTimer !== undefined) window.clearTimeout(previousTimer)
       fallbackFrameTimersRef.current.set(event.from, window.setTimeout(() => {

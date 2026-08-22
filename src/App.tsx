@@ -76,6 +76,7 @@ export default function App() {
   const realtime = useRealtime(profile, selectedTextChannelId)
   const call = useCall({
     clientId: realtime.clientId,
+    iceServers: realtime.iceServers,
     realtimeStatus: realtime.status,
     subscribeToCallEvents: realtime.subscribeToCallEvents,
     joinRealtimeCall: realtime.joinCall,

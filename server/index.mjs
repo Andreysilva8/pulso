@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { WebSocket, WebSocketServer } from 'ws'
+import { generateCloudflareIceServers } from './turn.mjs'
 
 const currentFile = fileURLToPath(import.meta.url)
 const currentDir = path.dirname(currentFile)
@@ -14,8 +15,16 @@ const portArg = process.argv.find((value) => value.startsWith('--port='))
 const port = Number(portArg?.split('=')[1] || process.env.PORT || 4173)
 const host = process.env.HOST || '127.0.0.1'
 const maxClients = Number(process.env.MAX_CLIENTS || 100)
-const MAX_RELAY_FRAME_LENGTH = 52_000
+const cloudflareTurnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID || ''
+const cloudflareTurnApiToken = process.env.CLOUDFLARE_TURN_API_TOKEN || ''
+const cloudflareTurnTtl = Number(process.env.CLOUDFLARE_TURN_TTL || 3_600)
+const MAX_RELAY_FRAME_LENGTH = 22_000
 const MAX_RELAY_BYTES_PER_WINDOW = 6 * 1024 * 1024
+// A 30 fps compatibility stream plus 4096-sample audio chunks produces about
+// 42 media messages/s. The byte, frame and audio validators below remain the
+// effective media limits; this ceiling protects signaling without closing a
+// valid relay after a few seconds.
+const MAX_MESSAGES_PER_WINDOW = 600
 const MAX_MEDIA_BUFFERED_AMOUNT = 512 * 1024
 const MAX_CONTROL_BUFFERED_AMOUNT = 2 * 1024 * 1024
 const allowedOrigins = new Set(
@@ -211,6 +220,36 @@ function callParticipants(channelId) {
     }))
 }
 
+async function refreshTurnCredentials(client) {
+  if (
+    !cloudflareTurnKeyId
+    || !cloudflareTurnApiToken
+    || !client.profile
+    || !client.callChannelId
+    || client.socket.readyState !== WebSocket.OPEN
+  ) return
+  try {
+    const config = await generateCloudflareIceServers({
+      keyId: cloudflareTurnKeyId,
+      apiToken: cloudflareTurnApiToken,
+      ttl: cloudflareTurnTtl,
+    })
+    if (!config || client.socket.readyState !== WebSocket.OPEN) return
+    send(client, {
+      type: 'session:ice-servers',
+      iceServers: config.iceServers,
+      expiresAt: config.expiresAt,
+    })
+    const refreshIn = Math.max(5 * 60_000, Math.floor(config.ttlSeconds * 1_000 * 0.75))
+    client.turnRefreshTimer = setTimeout(() => { void refreshTurnCredentials(client) }, refreshIn)
+  } catch (error) {
+    console.warn('TURN temporário indisponível; mantendo conexão direta/STUN.', error.message)
+    if (client.socket.readyState === WebSocket.OPEN) {
+      client.turnRefreshTimer = setTimeout(() => { void refreshTurnCredentials(client) }, 60_000)
+    }
+  }
+}
+
 function callsSnapshot() {
   const result = {}
   for (const client of clients.values()) {
@@ -241,6 +280,11 @@ function leaveCall(client) {
   const channelId = client.callChannelId
   if (!channelId) return
 
+  if (client.turnRefreshTimer) {
+    clearTimeout(client.turnRefreshTimer)
+    client.turnRefreshTimer = null
+  }
+
   if (client.media.screen) {
     broadcast(
       { type: 'call:screen-stop', channelId, from: client.id },
@@ -266,7 +310,7 @@ function handleMessage(client, rawData) {
     client.messagesInWindow = 0
   }
   client.messagesInWindow += 1
-  if (client.messagesInWindow > 300) {
+  if (client.messagesInWindow > MAX_MESSAGES_PER_WINDOW) {
     client.socket.close(1008, 'Limite de mensagens excedido')
     return
   }
@@ -365,6 +409,9 @@ function handleMessage(client, rawData) {
       }
       client.lastScreenAudioSequence = -1
       send(client, { type: 'call:peers', channelId: message.channelId, peers: existingPeers })
+      // TURN credentials are only issued to clients that have completed the
+      // workspace handshake and joined a real call, never to idle sockets.
+      void refreshTurnCredentials(client)
       broadcastCallPresence(message.channelId)
       break
     }
@@ -417,12 +464,20 @@ function handleMessage(client, rawData) {
       const targets = relayTargets(client, message.targets)
       if (!targets.size) return
       const dataUrl = typeof message.dataUrl === 'string' ? message.dataUrl : ''
+      const relayFrameRate = Number(message.frameRate)
+      if (!Number.isSafeInteger(relayFrameRate) || relayFrameRate < 1 || relayFrameRate > 30) return
       if (dataUrl.length > MAX_RELAY_FRAME_LENGTH || !/^data:image\/(?:webp|jpeg);base64,[a-z0-9+/=]+$/i.test(dataUrl)) return
-      if (messageWindowNow - client.lastScreenFrameAt < 80) return
+      if (messageWindowNow - client.lastScreenFrameAt < 30) return
       if (!consumeRelayBudget(client, dataUrl.length, messageWindowNow)) return
       client.lastScreenFrameAt = messageWindowNow
       broadcast(
-        { type: 'call:screen-frame', channelId: client.callChannelId, from: client.id, dataUrl },
+        {
+          type: 'call:screen-frame',
+          channelId: client.callChannelId,
+          from: client.id,
+          dataUrl,
+          frameRate: relayFrameRate,
+        },
         (other) => targets.has(other.id),
         { droppable: true },
       )
@@ -502,6 +557,7 @@ socketServer.on('connection', (socket) => {
     lastScreenFrameAt: 0,
     lastScreenAudioAt: 0,
     lastScreenAudioSequence: -1,
+    turnRefreshTimer: null,
     isAlive: true,
   }
   clients.set(id, client)
@@ -510,6 +566,7 @@ socketServer.on('connection', (socket) => {
   socket.on('message', (data) => handleMessage(client, data))
   socket.on('pong', () => { client.isAlive = true })
   socket.on('close', () => {
+    if (client.turnRefreshTimer) clearTimeout(client.turnRefreshTimer)
     leaveCall(client)
     clients.delete(id)
     broadcastPresence()

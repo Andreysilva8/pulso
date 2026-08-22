@@ -73,12 +73,12 @@ describe('ParticipantTile media playback contract', () => {
       <ParticipantTile
         participant={participant}
         stream={null}
-        fallbackFrame={{ dataUrl: 'data:image/webp;base64,UklGRg==', receivedAt: 1 }}
+        fallbackFrame={{ dataUrl: 'data:image/webp;base64,UklGRg==', receivedAt: 1, frameRate: 30 }}
       />,
     )
 
     expect(markup).toContain('participant-tile__relay-frame')
-    expect(markup).toContain('Compatível · 12 fps')
+    expect(markup).toContain('Compatível · limite 30 fps')
     expect(markup).not.toContain('Conectando à transmissão…')
   })
 

@@ -161,6 +161,7 @@ try {
   first.socket.send(JSON.stringify({
     type: 'call:screen-frame',
     dataUrl: 'data:image/webp;base64,UklGRg==',
+    frameRate: 30,
     targets: [second.id],
   }))
   const screenFrame = await waitFor(
@@ -168,6 +169,7 @@ try {
     'quadro de compatibilidade chegar ao espectador',
   )
   assert.equal(screenFrame.from, first.id)
+  assert.equal(screenFrame.frameRate, 30)
 
   first.socket.send(JSON.stringify({
     type: 'call:screen-audio',
@@ -192,6 +194,24 @@ try {
   }))
   await delay(80)
   assert.equal(second.messages.filter((message) => message.type === 'call:screen-audio').length, audioCount)
+
+  // A real 30 fps compatibility stream plus audio exceeds the old generic
+  // 300-message ceiling. Media-specific byte/rate limits must keep the socket
+  // alive instead of disconnecting a valid transmission after a few seconds.
+  for (let index = 0; index < 350; index += 1) {
+    first.socket.send(JSON.stringify({
+      type: 'call:screen-frame',
+      dataUrl: 'invalid',
+      frameRate: 30,
+      targets: [second.id],
+    }))
+  }
+  const pingAt = Date.now()
+  first.socket.send(JSON.stringify({ type: 'ping', at: pingAt }))
+  await waitFor(
+    () => first.messages.find((message) => message.type === 'pong' && message.at === pingAt),
+    'socket continuar aberto sob a cadência do modo compatível',
+  )
 
   second.socket.send(JSON.stringify({ type: 'call:screen-relay-release', target: first.id }))
   await waitFor(
